@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PPTX Auto Generator</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">P</div>
+                <div>
+                    <h1>PPTX Auto Generator</h1>
+                    <p class="subtitle">AI でプレゼン資料を自動生成</p>
+                </div>
+            </div>
+        </header>
+
+        <main class="main">
+            <form id="generateForm" class="form-card">
+                <div class="form-group">
+                    <label for="topic">トピック <span class="required">*</span></label>
+                    <input
+                        type="text"
+                        id="topic"
+                        name="topic"
+                        placeholder="例: DXの推進戦略、AIの未来、売上データ分析..."
+                        required
+                        maxlength="500"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label>入力ファイル（任意）</label>
+                    <div class="file-upload-area">
+                        <div class="file-row">
+                            <div class="file-input-wrap">
+                                <label class="file-label" for="pdfFile">
+                                    <span class="file-icon">📄</span> PDF
+                                </label>
+                                <input type="file" id="pdfFile" accept=".pdf" class="file-input">
+                                <span id="pdfFileName" class="file-name">未選択</span>
+                                <button type="button" class="file-clear" id="pdfClear" style="display:none">✕</button>
+                            </div>
+                            <div class="file-input-wrap">
+                                <label class="file-label" for="csvFile">
+                                    <span class="file-icon">📊</span> CSV
+                                </label>
+                                <input type="file" id="csvFile" accept=".csv" class="file-input">
+                                <span id="csvFileName" class="file-name">未選択</span>
+                                <button type="button" class="file-clear" id="csvClear" style="display:none">✕</button>
+                            </div>
+                        </div>
+                        <div class="summary-option" id="summaryOptionWrap" style="display:none">
+                            <label class="checkbox-wrap">
+                                <input type="checkbox" id="includeSummary" checked>
+                                <span class="checkbox-custom"></span>
+                                <span class="checkbox-text">分析サマリーページを先頭に追加</span>
+                                <span class="checkbox-hint">ファイルの内容を要約した一覧ページを自動生成します</span>
+                            </label>
+                        </div>
+                        <p class="file-hint">PDF（最大10MB）/ CSV（最大1,000行・5MB）</p>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="numSlides">スライド枚数</label>
+                        <select id="numSlides" name="num_slides">
+                            <option value="5">5枚</option>
+                            <option value="8" selected>8枚</option>
+                            <option value="10">10枚</option>
+                            <option value="12">12枚</option>
+                            <option value="15">15枚</option>
+                            <option value="20">20枚</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="style">スタイル</label>
+                        <select id="style" name="style">
+                            <option value="business">ビジネス</option>
+                            <option value="casual">カジュアル</option>
+                            <option value="academic">アカデミック</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="language">言語</label>
+                        <select id="language" name="language">
+                            <option value="ja">日本語</option>
+                            <option value="en">English</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>カラーテーマ（AIが自動選択 or 指定）</label>
+                    <div class="theme-grid">
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="auto" checked>
+                            <span class="theme-swatch theme-auto">AI</span>
+                            <span class="theme-label">自動</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="ocean_blue">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#0D47A1,#29B6F6)"></span>
+                            <span class="theme-label">Ocean</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="midnight">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#1A1A2E,#E94D6B)"></span>
+                            <span class="theme-label">Midnight</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="forest">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#1B5E20,#66BB6A)"></span>
+                            <span class="theme-label">Forest</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="sunset">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#BF360C,#FF8F00)"></span>
+                            <span class="theme-label">Sunset</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="lavender">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#4A148C,#CE93D8)"></span>
+                            <span class="theme-label">Lavender</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="monochrome">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#212121,#757575)"></span>
+                            <span class="theme-label">Mono</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="coral">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#C62828,#FF7043)"></span>
+                            <span class="theme-label">Coral</span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="theme" value="emerald">
+                            <span class="theme-swatch" style="background:linear-gradient(135deg,#004D40,#26A69A)"></span>
+                            <span class="theme-label">Emerald</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="additionalInstructions">追加指示（任意）</label>
+                    <textarea
+                        id="additionalInstructions"
+                        name="additional_instructions"
+                        placeholder="例: 経営層向けに要約、グラフを多用して、前年比を強調..."
+                        rows="3"
+                        maxlength="2000"
+                    ></textarea>
+                </div>
+
+                <button type="submit" id="submitBtn" class="btn-generate">
+                    <span class="btn-text">生成する</span>
+                    <span class="btn-loading" style="display:none;">
+                        <span class="spinner"></span>
+                        生成中...（20〜40秒かかります）
+                    </span>
+                </button>
+            </form>
+
+            <div id="statusMessage" class="status-message" style="display:none;"></div>
+        </main>
+
+        <footer class="footer">
+            <p>Powered by GitHub Models (GPT-4o) + python-pptx + Pexels</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+openai
+python-pptx
+python-dotenv
+Pillow
+requests
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+pymupdf
+pandas

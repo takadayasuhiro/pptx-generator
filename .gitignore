@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+venv/
+output/*.pptx
+assets/cache/
+.vscode/
+.cursor/
+*.egg-info/
+dist/
+build/
+test_data.csv
