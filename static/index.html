@@ -15,165 +15,357 @@
                 <div class="logo-icon">P</div>
                 <div>
                     <h1>PPTX Auto Generator</h1>
-                    <p class="subtitle">AI でプレゼン資料を自動生成</p>
+                    <p class="subtitle">AI でデータ分析 &amp; プレゼン資料を自動生成</p>
                 </div>
             </div>
+            <button type="button" class="help-btn" id="helpBtn" title="ヘルプ">?</button>
         </header>
 
-        <main class="main">
-            <form id="generateForm" class="form-card">
-                <div class="form-group">
-                    <label for="topic">トピック <span class="required">*</span></label>
-                    <input
-                        type="text"
-                        id="topic"
-                        name="topic"
-                        placeholder="例: DXの推進戦略、AIの未来、売上データ分析..."
-                        required
-                        maxlength="500"
-                    >
+        <!-- ヘルプモーダル -->
+        <div class="help-overlay" id="helpOverlay">
+            <div class="help-modal">
+                <div class="help-header">
+                    <h2>ヘルプ &amp; 仕様</h2>
+                    <button type="button" class="help-close" id="helpClose">✕</button>
                 </div>
+                <div class="help-body">
+                    <section class="help-section">
+                        <h3>■ アプリ概要</h3>
+                        <p>複数の AI モデル（GPT-4o / Ollama 等）を切り替えて、テキスト質問への回答・ファイル分析・PPTX 自動生成を行うツールです。</p>
+                    </section>
 
-                <div class="form-group">
-                    <label>入力ファイル（任意）</label>
-                    <div class="file-upload-area">
-                        <div class="file-row">
-                            <div class="file-input-wrap">
-                                <label class="file-label" for="pdfFile">
-                                    <span class="file-icon">📄</span> PDF
-                                </label>
-                                <input type="file" id="pdfFile" accept=".pdf" class="file-input">
-                                <span id="pdfFileName" class="file-name">未選択</span>
-                                <button type="button" class="file-clear" id="pdfClear" style="display:none">✕</button>
+                    <section class="help-section">
+                        <h3>■ 3つのモード</h3>
+                        <div class="help-table">
+                            <div class="help-row help-row-head">
+                                <span>モード</span><span>機能</span><span>入力</span>
                             </div>
-                            <div class="file-input-wrap">
-                                <label class="file-label" for="csvFile">
-                                    <span class="file-icon">📊</span> CSV
-                                </label>
-                                <input type="file" id="csvFile" accept=".csv" class="file-input">
-                                <span id="csvFileName" class="file-name">未選択</span>
-                                <button type="button" class="file-clear" id="csvClear" style="display:none">✕</button>
+                            <div class="help-row">
+                                <span>🔍 データ分析</span>
+                                <span>AI による分析・要約・質問回答をテキスト出力</span>
+                                <span>テキスト / ファイル / 両方</span>
+                            </div>
+                            <div class="help-row">
+                                <span>📗 Excel 生成</span>
+                                <span>AI がレポート構成を作成し Excel をダウンロード</span>
+                                <span>テキスト必須 / ファイル任意</span>
+                            </div>
+                            <div class="help-row">
+                                <span>📊 PPTX 生成</span>
+                                <span>AI がスライド構成を作成し PPTX をダウンロード</span>
+                                <span>テキスト必須 / ファイル任意</span>
                             </div>
                         </div>
-                        <div class="summary-option" id="summaryOptionWrap" style="display:none">
-                            <label class="checkbox-wrap">
-                                <input type="checkbox" id="includeSummary" checked>
-                                <span class="checkbox-custom"></span>
-                                <span class="checkbox-text">分析サマリーページを先頭に追加</span>
-                                <span class="checkbox-hint">ファイルの内容を要約した一覧ページを自動生成します</span>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ 対応ファイル形式</h3>
+                        <div class="help-table">
+                            <div class="help-row help-row-head">
+                                <span>種別</span><span>拡張子</span><span>制限</span>
+                            </div>
+                            <div class="help-row">
+                                <span>PDF</span><span>.pdf</span><span>最大 10MB</span>
+                            </div>
+                            <div class="help-row">
+                                <span>CSV</span><span>.csv</span><span>最大 5MB / 1,000行</span>
+                            </div>
+                            <div class="help-row">
+                                <span>Excel</span><span>.xlsx .xls</span><span>最大 20MB / 1,000行</span>
+                            </div>
+                            <div class="help-row">
+                                <span>メール</span><span>.msg</span><span>最大 50MB</span>
+                            </div>
+                            <div class="help-row">
+                                <span>画像</span><span>.jpg .png .bmp .tiff .webp .gif .ico .heic</span><span>最大 20MB / AI Vision分析</span>
+                            </div>
+                            <div class="help-row">
+                                <span>SVG</span><span>.svg</span><span>テキストとして解析</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ 入力方法</h3>
+                        <ul class="help-list">
+                            <li><strong>テキスト入力</strong> — 入力エリアに直接テーマ・質問・指示を入力</li>
+                            <li><strong>ファイル添付ボタン</strong> — ツールバーの「📎 ファイル添付」をクリック</li>
+                            <li><strong>ドラッグ＆ドロップ</strong> — 入力エリアにファイルをドラッグ</li>
+                            <li><strong>クリップボードペースト</strong> — Ctrl+V で画像を貼り付け</li>
+                            <li><strong>複数ファイル</strong> — 一度に複数のファイルを追加可能</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ データ分析モードの使い方</h3>
+                        <ul class="help-list">
+                            <li>テキストだけで AI に質問・相談が可能</li>
+                            <li>ファイルを添付して「要約して」「100文字で」等の指示が可能</li>
+                            <li>文字数・形式を指定すればその通りに回答</li>
+                            <li>指示なしでファイルのみ添付すると包括的な分析レポートを生成</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ Excel 生成モードの使い方</h3>
+                        <ul class="help-list">
+                            <li>トピック（テーマ）の入力が必須</li>
+                            <li>AI が複数シート構成のレポートを自動生成</li>
+                            <li>KPI、データテーブル、チャート（棒・折れ線・円）を含むレポート</li>
+                            <li>CSV/Excel を添付すると実データに基づいた表・グラフを生成</li>
+                            <li>5種類のカラーテーマを AI が自動選択</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ PPTX 生成モードの使い方</h3>
+                        <ul class="help-list">
+                            <li>トピック（テーマ）の入力が必須</li>
+                            <li>スライド枚数（5〜20枚）、スタイル、言語を選択</li>
+                            <li>カラーテーマは AI 自動選択 or 9種類から手動指定</li>
+                            <li>CSV/Excel を添付するとデータに基づいたチャートを自動生成</li>
+                            <li>ファイル添付時「分析サマリーページを先頭に追加」オプションあり</li>
+                            <li>追加指示で「経営層向け」「グラフ多め」等の細かい調整が可能</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ PPTX の機能</h3>
+                        <ul class="help-list">
+                            <li>8種類のレイアウト（タイトル、コンテンツ、2カラム、画像、チャート、統計等）</li>
+                            <li>8種類のカラーテーマ + AI 自動選択</li>
+                            <li>動的チャート生成（棒・折れ線・円・ドーナツ）</li>
+                            <li>Pexels API による関連画像の自動挿入</li>
+                            <li>スピーカーノート付き</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>■ AI モデル選択</h3>
+                        <ul class="help-list">
+                            <li><strong>自動</strong> — 利用可能な最適モデルを自動選択（既定: GPT-4o）</li>
+                            <li>入力エリア下部のセレクターでモデルを切り替え可能</li>
+                            <li>API キーが未設定のモデルはグレーアウト表示</li>
+                            <li>Ollama がローカルで起動中の場合、インストール済みモデルを自動検出</li>
+                            <li>↻ ボタンで Ollama モデルを再検出</li>
+                        </ul>
+                    </section>
+
+                </div>
+            </div>
+        </div>
+
+        <main class="main">
+            <!-- モード切替タブ -->
+            <div class="mode-tabs">
+                <button class="mode-tab active" data-mode="analyze">
+                    <span class="tab-icon">🔍</span> データ分析
+                </button>
+                <button class="mode-tab" data-mode="excel">
+                    <span class="tab-icon">📗</span> Excel 生成
+                </button>
+                <button class="mode-tab" data-mode="pptx">
+                    <span class="tab-icon">📊</span> PPTX 生成
+                </button>
+            </div>
+
+            <form id="mainForm" class="form-card">
+                <!-- 統合入力エリア -->
+                <div class="unified-input" id="unifiedInput">
+                    <textarea id="topic" name="topic" rows="5" maxlength="5000"></textarea>
+                    <div class="unified-placeholder" id="unifiedPlaceholder">
+                        <div class="uph-icon">📁</div>
+                        <p class="uph-main">テーマや指示を入力</p>
+                        <p class="uph-sub">ファイルのドラッグ＆ドロップ / Ctrl+V も可能</p>
+                        <div class="uph-formats">
+                            <span class="fmt-tag fmt-pdf">PDF</span>
+                            <span class="fmt-tag fmt-csv">CSV</span>
+                            <span class="fmt-tag fmt-excel">Excel</span>
+                            <span class="fmt-tag fmt-msg">MSG</span>
+                            <span class="fmt-tag fmt-img">画像</span>
+                            <span class="fmt-tag fmt-svg">SVG</span>
+                        </div>
+                    </div>
+                    <input type="file" id="fileInput" multiple
+                        accept=".pdf,.csv,.xlsx,.xls,.msg,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.webp,.gif,.ico,.heic,.heif,.svg"
+                        class="file-input-hidden">
+                    <div id="fileList" class="file-chips"></div>
+                    <div class="input-toolbar">
+                        <button type="button" class="attach-btn" id="attachBtn">📎 ファイル添付</button>
+                        <div class="toolbar-formats">
+                            <span>PDF</span><span>CSV</span><span>Excel</span><span>MSG</span><span>画像</span>
+                        </div>
+                        <div class="model-selector-wrap">
+                            <select id="modelSelect" class="model-select" title="AIモデル選択">
+                                <option value="auto">自動</option>
+                            </select>
+                            <button type="button" class="model-refresh" id="modelRefresh" title="モデル再検出">↻</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- サマリートグル（PPTX モードでファイルありの時のみ） -->
+                <div class="summary-toggle" id="summaryToggle" style="display:none">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="includeSummary" checked>
+                        <span class="toggle-switch"></span>
+                        <span class="toggle-content">
+                            <span class="toggle-title">📋 分析サマリーページを先頭に追加</span>
+                            <span class="toggle-desc">添付ファイルの内容を要約した一覧ページをスライド先頭に自動挿入します</span>
+                        </span>
+                    </label>
+                </div>
+
+                <!-- Excel モード専用オプション -->
+                <div id="excelOptions" style="display:none">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="excelStyle">スタイル</label>
+                            <select id="excelStyle">
+                                <option value="business">ビジネス</option>
+                                <option value="casual">カジュアル</option>
+                                <option value="academic">アカデミック</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="excelLanguage">言語</label>
+                            <select id="excelLanguage">
+                                <option value="ja">日本語</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="excelInstructions">追加指示（任意）</label>
+                        <textarea
+                            id="excelInstructions"
+                            placeholder="例: 月別集計表を作って、グラフ多めに、KPIシートを追加..."
+                            rows="3"
+                            maxlength="2000"
+                        ></textarea>
+                    </div>
+                </div>
+
+                <!-- PPTX モード専用オプション -->
+                <div id="pptxOptions" style="display:none">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="numSlides">スライド枚数</label>
+                            <select id="numSlides" name="num_slides">
+                                <option value="5">5枚</option>
+                                <option value="8" selected>8枚</option>
+                                <option value="10">10枚</option>
+                                <option value="12">12枚</option>
+                                <option value="15">15枚</option>
+                                <option value="20">20枚</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="style">スタイル</label>
+                            <select id="style" name="style">
+                                <option value="business">ビジネス</option>
+                                <option value="casual">カジュアル</option>
+                                <option value="academic">アカデミック</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="language">言語</label>
+                            <select id="language" name="language">
+                                <option value="ja">日本語</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>カラーテーマ（AIが自動選択 or 指定）</label>
+                        <div class="theme-grid">
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="auto" checked>
+                                <span class="theme-swatch theme-auto">AI</span>
+                                <span class="theme-label">自動</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="ocean_blue">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#0D47A1,#29B6F6)"></span>
+                                <span class="theme-label">Ocean</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="midnight">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#1A1A2E,#E94D6B)"></span>
+                                <span class="theme-label">Midnight</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="forest">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#1B5E20,#66BB6A)"></span>
+                                <span class="theme-label">Forest</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="sunset">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#BF360C,#FF8F00)"></span>
+                                <span class="theme-label">Sunset</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="lavender">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#4A148C,#CE93D8)"></span>
+                                <span class="theme-label">Lavender</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="monochrome">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#212121,#757575)"></span>
+                                <span class="theme-label">Mono</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="coral">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#C62828,#FF7043)"></span>
+                                <span class="theme-label">Coral</span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="theme" value="emerald">
+                                <span class="theme-swatch" style="background:linear-gradient(135deg,#004D40,#26A69A)"></span>
+                                <span class="theme-label">Emerald</span>
                             </label>
                         </div>
-                        <p class="file-hint">PDF（最大10MB）/ CSV（最大1,000行・5MB）</p>
-                    </div>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="numSlides">スライド枚数</label>
-                        <select id="numSlides" name="num_slides">
-                            <option value="5">5枚</option>
-                            <option value="8" selected>8枚</option>
-                            <option value="10">10枚</option>
-                            <option value="12">12枚</option>
-                            <option value="15">15枚</option>
-                            <option value="20">20枚</option>
-                        </select>
                     </div>
 
                     <div class="form-group">
-                        <label for="style">スタイル</label>
-                        <select id="style" name="style">
-                            <option value="business">ビジネス</option>
-                            <option value="casual">カジュアル</option>
-                            <option value="academic">アカデミック</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="language">言語</label>
-                        <select id="language" name="language">
-                            <option value="ja">日本語</option>
-                            <option value="en">English</option>
-                        </select>
+                        <label for="additionalInstructions">追加指示（任意）</label>
+                        <textarea
+                            id="additionalInstructions"
+                            name="additional_instructions"
+                            placeholder="例: 経営層向けに要約、グラフを多用して、前年比を強調..."
+                            rows="3"
+                            maxlength="2000"
+                        ></textarea>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>カラーテーマ（AIが自動選択 or 指定）</label>
-                    <div class="theme-grid">
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="auto" checked>
-                            <span class="theme-swatch theme-auto">AI</span>
-                            <span class="theme-label">自動</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="ocean_blue">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#0D47A1,#29B6F6)"></span>
-                            <span class="theme-label">Ocean</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="midnight">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#1A1A2E,#E94D6B)"></span>
-                            <span class="theme-label">Midnight</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="forest">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#1B5E20,#66BB6A)"></span>
-                            <span class="theme-label">Forest</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="sunset">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#BF360C,#FF8F00)"></span>
-                            <span class="theme-label">Sunset</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="lavender">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#4A148C,#CE93D8)"></span>
-                            <span class="theme-label">Lavender</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="monochrome">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#212121,#757575)"></span>
-                            <span class="theme-label">Mono</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="coral">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#C62828,#FF7043)"></span>
-                            <span class="theme-label">Coral</span>
-                        </label>
-                        <label class="theme-option">
-                            <input type="radio" name="theme" value="emerald">
-                            <span class="theme-swatch" style="background:linear-gradient(135deg,#004D40,#26A69A)"></span>
-                            <span class="theme-label">Emerald</span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label for="additionalInstructions">追加指示（任意）</label>
-                    <textarea
-                        id="additionalInstructions"
-                        name="additional_instructions"
-                        placeholder="例: 経営層向けに要約、グラフを多用して、前年比を強調..."
-                        rows="3"
-                        maxlength="2000"
-                    ></textarea>
-                </div>
-
-                <button type="submit" id="submitBtn" class="btn-generate">
-                    <span class="btn-text">生成する</span>
+                <!-- 実行ボタン -->
+                <button type="submit" id="submitBtn" class="btn-generate analyze-mode">
+                    <span class="btn-text" id="btnLabel">分析を実行する</span>
                     <span class="btn-loading" style="display:none;">
                         <span class="spinner"></span>
-                        生成中...（20〜40秒かかります）
+                        <span id="loadingLabel">AI が分析中...</span>
                     </span>
                 </button>
             </form>
 
+            <!-- ステータスメッセージ -->
             <div id="statusMessage" class="status-message" style="display:none;"></div>
+
+            <!-- 分析結果表示エリア -->
+            <div id="analysisResult" class="analysis-result" style="display:none;">
+                <div class="analysis-header">
+                    <h2>📋 分析レポート</h2>
+                    <button type="button" id="copyBtn" class="btn-copy" title="コピー">コピー</button>
+                </div>
+                <pre id="analysisText" class="analysis-text"></pre>
+            </div>
         </main>
 
         <footer class="footer">
-            <p>Powered by GitHub Models (GPT-4o) + python-pptx + Pexels</p>
+            <p>Powered by Multi-AI (GPT-4o / Ollama) + python-pptx + Pexels</p>
         </footer>
     </div>
 

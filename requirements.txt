@@ -9,3 +9,5 @@ python-multipart
 aiofiles
 pymupdf
 pandas
+openpyxl
+extract-msg

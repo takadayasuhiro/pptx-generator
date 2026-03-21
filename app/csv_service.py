@@ -38,7 +38,10 @@ def validate_and_read(content: bytes) -> pd.DataFrame:
 
 def analyze(content: bytes) -> dict:
     df = validate_and_read(content)
+    return analyze_dataframe(df)
 
+
+def analyze_dataframe(df: pd.DataFrame) -> dict:
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     category_cols = df.select_dtypes(include="object").columns.tolist()
     datetime_cols = df.select_dtypes(include="datetime").columns.tolist()

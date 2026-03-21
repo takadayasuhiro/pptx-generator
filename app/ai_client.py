@@ -1,21 +1,15 @@
 import json
 import re
-from openai import OpenAI
-from app.config import GITHUB_TOKEN, AI_MODEL
+from app.model_registry import get_client
 from app.models import (
     GenerateRequest, PresentationData, SlideData,
     ChartData, StatItem,
 )
 
-client = OpenAI(
-    base_url="https://models.github.ai/inference",
-    api_key=GITHUB_TOKEN,
-)
-
 SYSTEM_PROMPT = """あなたはプレゼンテーション資料の構成専門家であり、データ分析の専門家でもあります。
 指示に従い、純粋なJSON形式のみで出力してください。
 コードブロック記法（```）は絶対に使わないでください。
-CSVデータの分析結果が提供された場合は、その実データを正確に反映したチャートやstatsを作成してください。
+CSVまたはExcelデータの分析結果が提供された場合は、その実データを正確に反映したチャートやstatsを作成してください。
 chart の series.values には、提供された実データの数値をそのまま使ってください。架空の数値は使わないでください。
 重要な指標にはstats（大きな数字の強調表示）を活用してください。
 画像が効果的なスライドにはimage_keywordを必ず指定してください。"""
@@ -36,7 +30,7 @@ def _build_source_context(req: GenerateRequest) -> str:
 
     if req.pdf_text:
         sections.append(f"""
-■ 参照PDF文書の内容:
+■ 参照データ・文書の内容:
 {req.pdf_text}
 """)
 
@@ -256,12 +250,132 @@ def _parse_response(text: str) -> PresentationData:
     return PresentationData(title=data["title"], theme=theme, slides=slides)
 
 
-async def generate_presentation_content(req: GenerateRequest) -> PresentationData:
-    prompt = _build_prompt(req)
+ANALYZE_SYSTEM_PROMPT = """あなたはデータ分析の専門家です。
+提供されたデータ（CSV/Excel分析結果、PDF文書、メール、画像分析結果など）を読み解き、
+ビジネスパーソンが理解しやすい日本語で、要点・洞察・提言を含む分析レポートを作成してください。
+ユーザーが文字数・長さ・形式を指定した場合は、その指示を最優先で厳守してください。
+指定がない場合は、マークダウンは使わずプレーンテキストで見やすく整形し、
+セクションの区切りには「━━━」や「■」「▶」を使ってください。"""
+
+GENERAL_SYSTEM_PROMPT = """あなたは知識豊富なビジネスアドバイザーであり、分析の専門家です。
+ユーザーの質問や指示に対して、専門的かつ分かりやすい日本語で回答してください。
+ユーザーが文字数・長さ・形式を指定した場合は、その指示を最優先で厳守してください。
+指定がない場合は、マークダウンは使わずプレーンテキストで見やすく整形し、
+セクションの区切りには「━━━」や「■」「▶」を使ってください。"""
+
+
+def _build_analysis_context(csv_analysis: dict | None, pdf_text: str) -> str:
+    sections = []
+    if pdf_text:
+        sections.append(f"■ 入力データの内容:\n{pdf_text}")
+
+    if csv_analysis:
+        a = csv_analysis
+        overview = a.get("overview", {})
+        text = f"■ CSVデータ分析結果:\n"
+        text += f"データ概要: {overview.get('rows', '?')}行 × {overview.get('columns', '?')}列\n"
+        text += f"列名: {', '.join(overview.get('column_names', []))}\n"
+
+        if a.get("statistics"):
+            text += "\n基本統計量:\n"
+            for col, stats in a["statistics"].items():
+                text += f"  {col}: 平均={stats.get('mean', '?')}, 標準偏差={stats.get('std', '?')}, 最小={stats.get('min', '?')}, 最大={stats.get('max', '?')}\n"
+
+        if a.get("correlations"):
+            text += "\n注目すべき相関:\n"
+            for c in a["correlations"][:5]:
+                text += f"  {c['col1']} ↔ {c['col2']} = {c['value']}\n"
+
+        if a.get("trends"):
+            text += "\nトレンド:\n"
+            for col, trend in a["trends"].items():
+                text += f"  {col}: {trend}\n"
+
+        if a.get("category_summary"):
+            text += "\nカテゴリ別集計:\n"
+            for col, counts in a["category_summary"].items():
+                items = [f"{k}({v}件)" for k, v in list(counts.items())[:8]]
+                text += f"  {col}: {', '.join(items)}\n"
+
+        if a.get("preview"):
+            text += f"\nデータプレビュー（先頭5行）:\n"
+            text += f"  {json.dumps(a['preview'], ensure_ascii=False, indent=2)}\n"
+
+        sections.append(text)
+
+    return "\n\n".join(sections)
+
+
+async def generate_analysis_text(csv_analysis: dict | None = None,
+                                  pdf_text: str = "",
+                                  topic: str = "",
+                                  model_id: str = "auto") -> str:
+    context = _build_analysis_context(csv_analysis, pdf_text)
+    has_context = bool(context.strip())
+    has_topic = bool(topic.strip())
+
+    if not has_context and not has_topic:
+        return "分析対象のデータがありません。"
+
+    if has_context and has_topic:
+        prompt = f"""以下のデータについて、ユーザーの指示に従って回答してください。
+
+【ユーザーの指示】
+{topic}
+
+{context}"""
+        system_prompt = ANALYZE_SYSTEM_PROMPT
+    elif has_context:
+        prompt = f"""以下のデータを分析し、包括的なレポートを作成してください。
+
+{context}
+
+以下の構成でレポートを作成してください:
+
+1. データ概要（何のデータか、規模）
+2. 主要な発見事項（3〜5点）
+3. 数値の詳細分析（統計量、相関、トレンド）
+4. カテゴリ別の特徴
+5. 総合評価と提言（ビジネスへの示唆）
+
+プレーンテキストで、読みやすく整形してください。"""
+        system_prompt = ANALYZE_SYSTEM_PROMPT
+    else:
+        prompt = topic
+        system_prompt = GENERAL_SYSTEM_PROMPT
+
+    client, model_name, _ = get_client(model_id)
 
     try:
         response = client.chat.completions.create(
-            model=AI_MODEL,
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+        )
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "rate" in err_str.lower():
+            raise RuntimeError("APIのレート制限に達しました。しばらく待ってから再度お試しください。")
+        raise RuntimeError(f"AI API エラー: {e}")
+
+    content = response.choices[0].message.content
+    if not content:
+        raise RuntimeError("AI API から空のレスポンスが返されました。")
+
+    return content
+
+
+async def generate_presentation_content(req: GenerateRequest,
+                                         model_id: str = "auto") -> PresentationData:
+    prompt = _build_prompt(req)
+    client, model_name, _ = get_client(model_id)
+
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -282,5 +396,130 @@ async def generate_presentation_content(req: GenerateRequest) -> PresentationDat
 
     try:
         return _parse_response(content)
+    except (json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"AIの応答をパースできませんでした: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Excel generation
+# ---------------------------------------------------------------------------
+
+EXCEL_SYSTEM_PROMPT = """あなたはビジネスレポート作成の専門家です。
+指示に従い、Excel形式のレポート構成を純粋なJSON形式のみで出力してください。
+コードブロック記法（```）は絶対に使わないでください。
+CSV/Excelデータの分析結果が提供された場合は、その実データを正確に反映したテーブルやチャートを作成してください。
+chartのseriesのvaluesには、提供された実データの数値をそのまま使ってください。架空の数値は使わないでください。
+tableのrowsの各要素では、数値はJSON数値型（引用符なし）で返してください。"""
+
+
+def _build_excel_prompt(topic: str, source_context: str,
+                        style: str, additional_instructions: str) -> str:
+    style_map = {
+        "business": "ビジネス向けのフォーマルなレポート",
+        "casual": "読みやすくカジュアルなレポート",
+        "academic": "学術的で詳細なレポート",
+    }
+    style_desc = style_map.get(style, style_map["business"])
+
+    source_instruction = ""
+    if source_context.strip():
+        source_instruction = (
+            "提供されたデータを正確に反映したテーブルとチャートを含めてください。"
+            "chart_ready_data が含まれている場合はその実データを使ってください。"
+        )
+
+    return f"""以下の条件でExcelレポートの構成を生成してください。
+
+【トピック】{topic}
+【スタイル】{style_desc}
+{f"【追加指示】{additional_instructions}" if additional_instructions else ""}
+{source_instruction}
+
+{source_context}
+
+以下のJSON形式で出力してください。シートは1〜3枚が適切です。
+
+{{
+  "title": "レポートタイトル",
+  "theme": "blue",
+  "sheets": [
+    {{
+      "name": "シート名（最大31文字）",
+      "sections": [
+        {{"type": "title", "text": "レポートタイトル", "subtitle": "サブタイトル"}},
+        {{"type": "heading", "text": "セクション見出し"}},
+        {{"type": "text", "content": "テキスト内容（改行は\\nで）"}},
+        {{"type": "kpi", "title": "主要指標", "items": [
+          {{"label": "ラベル", "value": "¥1,234,567"}}
+        ]}},
+        {{"type": "table", "title": "表タイトル",
+          "headers": ["列1", "列2", "列3"],
+          "rows": [["文字列", 12345, 67.8]]
+        }},
+        {{"type": "chart", "chart_type": "bar",
+          "title": "チャートタイトル",
+          "categories": ["A", "B", "C"],
+          "series": [{{"name": "系列名", "values": [100, 200, 300]}}]
+        }}
+      ]
+    }}
+  ]
+}}
+
+ルール:
+- 最初のシートの最初のsectionは必ず type: "title" にすること
+- theme は blue, green, orange, purple, gray のいずれか
+- chart_type は bar, line, pie のいずれか
+- table の rows の値は、数値はJSON数値型（引用符なし）で返すこと
+- kpi の items は2〜5個が目安
+- 読みやすく整理された構成にすること
+- 純粋なJSONのみ出力すること
+"""
+
+
+def _parse_excel_response(text: str) -> dict:
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return json.loads(cleaned.strip())
+
+
+async def generate_excel_content(
+    topic: str,
+    csv_analysis: dict | None = None,
+    pdf_text: str = "",
+    additional_instructions: str = "",
+    style: str = "business",
+    model_id: str = "auto",
+) -> dict:
+    source_context = _build_analysis_context(csv_analysis, pdf_text)
+    prompt = _build_excel_prompt(topic, source_context,
+                                 style, additional_instructions)
+
+    client, model_name, _ = get_client(model_id)
+
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": EXCEL_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+        )
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "rate" in err_str.lower():
+            raise RuntimeError(
+                "APIのレート制限に達しました。しばらく待ってから再度お試しください。"
+            )
+        raise RuntimeError(f"AI API エラー: {e}")
+
+    content = response.choices[0].message.content
+    if not content:
+        raise RuntimeError("AI API から空のレスポンスが返されました。")
+
+    try:
+        return _parse_excel_response(content)
     except (json.JSONDecodeError, KeyError) as e:
         raise RuntimeError(f"AIの応答をパースできませんでした: {e}")

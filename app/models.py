@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class GenerateRequest(BaseModel):
-    topic: str = Field(..., min_length=1, max_length=500)
+    topic: str = Field(..., min_length=1, max_length=2000)
     num_slides: int = Field(default=8, ge=3, le=20)
     style: str = Field(default="business")
     additional_instructions: str = Field(default="", max_length=2000)
