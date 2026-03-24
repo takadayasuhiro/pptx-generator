@@ -7,7 +7,7 @@ from app.ai_client import (
     generate_presentation_content, generate_analysis_text,
     generate_excel_content,
 )
-from app.pptx_builder import build_pptx, build_summary_data
+from app.pptx_builder import build_pptx, build_summary_data, get_available_pptx_templates
 from app.excel_builder import build_excel
 from app.file_processor import process_files
 from app.model_registry import get_available_models, clear_ollama_cache
@@ -44,6 +44,12 @@ async def list_models(refresh: bool = False):
     return {"models": safe}
 
 
+@app.get("/pptx-templates")
+async def list_pptx_templates():
+    templates = get_available_pptx_templates()
+    return {"templates": templates}
+
+
 @app.post("/generate")
 async def generate_pptx(
     topic: str = Form(...),
@@ -53,8 +59,12 @@ async def generate_pptx(
     additional_instructions: str = Form(""),
     include_summary: bool = Form(False),
     model: str = Form("auto"),
+    template: str = Form(""),
     files: list[UploadFile] = File(default=[]),
 ):
+    if not template:
+        raise HTTPException(status_code=400, detail="PPTXテンプレートを選択してください。")
+
     processed = await process_files(files, model_id=model)
 
     all_text_parts = list(processed["texts"])
@@ -87,7 +97,7 @@ async def generate_pptx(
     )
 
     try:
-        presentation_data = await generate_presentation_content(req, model_id=model)
+        presentation_data, used_model = await generate_presentation_content(req, model_id=model)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
@@ -97,6 +107,7 @@ async def generate_pptx(
         output_path = build_pptx(
             presentation_data, presentation_data.title,
             summary_data=summary_data,
+            template_id=template,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PPTX生成エラー: {str(e)}")
@@ -109,6 +120,8 @@ async def generate_pptx(
 
     if processed["warnings"]:
         response.headers["X-Processing-Warnings"] = " | ".join(processed["warnings"])
+    if used_model:
+        response.headers["X-AI-Model-Used"] = used_model
 
     return response
 
@@ -135,7 +148,7 @@ async def generate_excel_report(
         csv_analysis = processed["csv_analyses"][0]["analysis"]
 
     try:
-        excel_data = await generate_excel_content(
+        excel_data, used_model = await generate_excel_content(
             topic=topic,
             csv_analysis=csv_analysis,
             pdf_text=combined_text,
@@ -161,6 +174,8 @@ async def generate_excel_report(
 
     if processed["warnings"]:
         response.headers["X-Processing-Warnings"] = " | ".join(processed["warnings"])
+    if used_model:
+        response.headers["X-AI-Model-Used"] = used_model
 
     return response
 
@@ -194,7 +209,7 @@ async def analyze_file(
         )
 
     try:
-        analysis = await generate_analysis_text(
+        analysis, used_model = await generate_analysis_text(
             csv_analysis=csv_analysis,
             pdf_text=combined_text,
             topic=topic,
@@ -207,4 +222,7 @@ async def analyze_file(
     if processed["warnings"]:
         result["warnings"] = processed["warnings"]
 
-    return JSONResponse(content=result)
+    response = JSONResponse(content=result)
+    if used_model:
+        response.headers["X-AI-Model-Used"] = used_model
+    return response

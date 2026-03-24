@@ -10,6 +10,8 @@ from app.config import (
     ANTHROPIC_API_KEY,
     GOOGLE_API_KEY,
     OLLAMA_BASE_URL,
+    AI_MODEL,
+    AI_TIMEOUT,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,48 +71,68 @@ OLLAMA_CACHE_TTL = 30
 
 
 def _detect_ollama() -> list[dict]:
-    if not OLLAMA_BASE_URL:
-        return []
-
     now = time.time()
     if now - _ollama_cache["ts"] < OLLAMA_CACHE_TTL:
         return _ollama_cache["models"]
 
-    api_base = OLLAMA_BASE_URL.replace("/v1", "").rstrip("/")
+    candidates: list[str] = []
+    if OLLAMA_BASE_URL:
+        candidates.append(OLLAMA_BASE_URL)
+    # Linux Docker / WSL2 で host.docker.internal が使えないケースに備える。
+    candidates.extend([
+        "http://host.docker.internal:11434/v1",
+        "http://172.17.0.1:11434/v1",
+        "http://172.18.0.1:11434/v1",
+        "http://172.19.0.1:11434/v1",
+        "http://localhost:11434/v1",
+    ])
 
-    try:
-        resp = _requests.get(f"{api_base}/api/tags", timeout=3)
-        if resp.status_code != 200:
-            _ollama_cache.update(models=[], ts=now)
-            return []
+    seen = set()
+    candidates = [u for u in candidates if u and not (u in seen or seen.add(u))]
 
-        data = resp.json()
-        models = []
-        for m in data.get("models", []):
-            name = m.get("name", "")
-            short = name.split(":")[0]
-            vision = any(
-                kw in short.lower()
-                for kw in ("llava", "vision", "bakllava", "moondream")
-            )
-            models.append({
-                "id": f"ollama-{short}",
-                "label": f"{short} (Ollama)",
-                "provider": "ollama",
-                "base_url": OLLAMA_BASE_URL,
-                "model_id": name,
-                "api_key_env": None,
-                "supports_vision": vision,
-                "description": "ローカル実行",
-            })
+    for base in candidates:
+        api_base = base.replace("/v1", "").rstrip("/")
+        try:
+            resp = _requests.get(f"{api_base}/api/tags", timeout=2)
+            if resp.status_code != 200:
+                continue
 
-        _ollama_cache.update(models=models, ts=now)
-        return models
+            data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                name = m.get("name", "")
+                short = name.split(":")[0]
+                vision = any(
+                    kw in short.lower()
+                    for kw in ("llava", "vision", "bakllava", "moondream")
+                )
+                # Qwen 3.5 用の表示名・説明
+                if short.lower() == "qwen3.5":
+                    label = f"Qwen 3.5 (Ollama)"
+                    desc = "ローカル・高品質（Qwen 3.5）"
+                else:
+                    label = f"{short} (Ollama)"
+                    desc = "ローカル実行"
+                models.append({
+                    "id": f"ollama-{short}",
+                    "label": label,
+                    "provider": "ollama",
+                    "base_url": base,
+                    "model_id": name,
+                    "api_key_env": None,
+                    "supports_vision": vision,
+                    "description": desc,
+                })
 
-    except Exception as e:
-        logger.debug("Ollama 検出スキップ: %s", e)
-        _ollama_cache.update(models=[], ts=now)
-        return []
+            _ollama_cache.update(models=models, ts=now)
+            return models
+
+        except Exception as e:
+            logger.debug("Ollama 検出スキップ (%s): %s", base, e)
+            continue
+
+    _ollama_cache.update(models=[], ts=now)
+    return []
 
 
 def get_available_models() -> list[dict]:
@@ -144,10 +166,29 @@ def get_client(model_id: str = "auto") -> tuple[OpenAI, str, dict]:
 
     target = None
     if model_id == "auto":
-        for pref in ("gpt-4o", "gpt-4o-mini"):
-            target = next((m for m in available if m["id"] == pref), None)
-            if target:
-                break
+        # .env の AI_MODEL を優先（ollama-qwen3.5, openai/gpt-4o 等をサポート）
+        if AI_MODEL:
+            s = AI_MODEL.strip().lower()
+            candidates = []
+            if s.startswith("ollama-"):
+                candidates = [AI_MODEL.strip()]
+            elif "qwen3.5" in s or "qwen" in s:
+                candidates = ["ollama-qwen3.5"]
+            elif "gpt-4o-mini" in s:
+                candidates = ["gpt-4o-mini", "openai-gpt-4o-mini"]
+            elif "gpt-4o" in s:
+                candidates = ["gpt-4o", "openai-gpt-4o"]
+            else:
+                candidates = [AI_MODEL.strip()]
+            for cid in candidates:
+                target = next((m for m in available if m["id"] == cid), None)
+                if target:
+                    break
+        if not target:
+            for pref in ("gpt-4o", "gpt-4o-mini", "ollama-qwen3.5"):
+                target = next((m for m in available if m["id"] == pref), None)
+                if target:
+                    break
         if not target:
             target = available[0]
     else:
@@ -159,6 +200,7 @@ def get_client(model_id: str = "auto") -> tuple[OpenAI, str, dict]:
     client = OpenAI(
         base_url=target["base_url"],
         api_key=_resolve_key(target),
+        timeout=float(AI_TIMEOUT),
     )
     return client, target["model_id"], target
 
@@ -180,6 +222,7 @@ def get_vision_client(preferred: str = "auto") -> tuple[OpenAI, str, dict]:
     fb_client = OpenAI(
         base_url=target["base_url"],
         api_key=_resolve_key(target),
+        timeout=float(AI_TIMEOUT),
     )
     return fb_client, target["model_id"], target
 

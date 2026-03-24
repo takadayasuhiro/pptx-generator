@@ -122,7 +122,7 @@
                         <ul class="help-list">
                             <li>トピック（テーマ）の入力が必須</li>
                             <li>スライド枚数（5〜20枚）、スタイル、言語を選択</li>
-                            <li>カラーテーマは AI 自動選択 or 9種類から手動指定</li>
+                            <li>PPTXテンプレートを選択して、そのデザインに沿って生成</li>
                             <li>CSV/Excel を添付するとデータに基づいたチャートを自動生成</li>
                             <li>ファイル添付時「分析サマリーページを先頭に追加」オプションあり</li>
                             <li>追加指示で「経営層向け」「グラフ多め」等の細かい調整が可能</li>
@@ -133,7 +133,7 @@
                         <h3>■ PPTX の機能</h3>
                         <ul class="help-list">
                             <li>8種類のレイアウト（タイトル、コンテンツ、2カラム、画像、チャート、統計等）</li>
-                            <li>8種類のカラーテーマ + AI 自動選択</li>
+                            <li>PPTXテンプレートのデザインをそのまま活用</li>
                             <li>動的チャート生成（棒・折れ線・円・ドーナツ）</li>
                             <li>Pexels API による関連画像の自動挿入</li>
                             <li>スピーカーノート付き</li>
@@ -278,54 +278,12 @@
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>カラーテーマ（AIが自動選択 or 指定）</label>
-                        <div class="theme-grid">
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="auto" checked>
-                                <span class="theme-swatch theme-auto">AI</span>
-                                <span class="theme-label">自動</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="ocean_blue">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#0D47A1,#29B6F6)"></span>
-                                <span class="theme-label">Ocean</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="midnight">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#1A1A2E,#E94D6B)"></span>
-                                <span class="theme-label">Midnight</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="forest">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#1B5E20,#66BB6A)"></span>
-                                <span class="theme-label">Forest</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="sunset">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#BF360C,#FF8F00)"></span>
-                                <span class="theme-label">Sunset</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="lavender">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#4A148C,#CE93D8)"></span>
-                                <span class="theme-label">Lavender</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="monochrome">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#212121,#757575)"></span>
-                                <span class="theme-label">Mono</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="coral">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#C62828,#FF7043)"></span>
-                                <span class="theme-label">Coral</span>
-                            </label>
-                            <label class="theme-option">
-                                <input type="radio" name="theme" value="emerald">
-                                <span class="theme-swatch" style="background:linear-gradient(135deg,#004D40,#26A69A)"></span>
-                                <span class="theme-label">Emerald</span>
-                            </label>
+                    <div class="form-row form-row-template">
+                        <div class="form-group form-group-template">
+                            <label for="templateSelect">PPTXテンプレート（必須）</label>
+                            <select id="templateSelect" name="template" title="企画書などのテンプレートを選択">
+                                <option value="">選択してください</option>
+                            </select>
                         </div>
                     </div>
 
@@ -342,15 +300,24 @@
                 </div>
 
                 <!-- 実行ボタン -->
-                <button type="submit" id="submitBtn" class="btn-generate analyze-mode">
-                    <span class="btn-text" id="btnLabel">分析を実行する</span>
-                    <span class="btn-loading" style="display:none;">
-                        <span class="spinner"></span>
-                        <span id="loadingLabel">AI が分析中...</span>
-                    </span>
-                </button>
+                <div class="action-buttons">
+                    <button type="submit" id="submitBtn" class="btn-generate analyze-mode">
+                        <span class="btn-text" id="btnLabel">分析を実行する</span>
+                        <span class="btn-loading" style="display:none;">
+                            <span class="spinner"></span>
+                            <span id="loadingLabel">AI が分析中...</span>
+                        </span>
+                    </button>
+                    <button type="button" id="stopBtn" class="btn-stop" style="display:none;">処理を停止する</button>
+                </div>
+                <p class="stop-note">※ 停止はリクエストを中断します。サーバー側のモデル処理は直ちに止まらない場合があります。</p>
             </form>
 
+            <!-- 処理ログ（実行中に逐次表示） -->
+            <div id="progressLog" class="progress-log" style="display:none;">
+                <div class="progress-log-header">処理状況</div>
+                <div id="progressLogContent" class="progress-log-content"></div>
+            </div>
             <!-- ステータスメッセージ -->
             <div id="statusMessage" class="status-message" style="display:none;"></div>
 

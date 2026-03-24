@@ -1,6 +1,6 @@
 import json
 import re
-from app.model_registry import get_client
+from app.model_registry import get_client, get_available_models
 from app.models import (
     GenerateRequest, PresentationData, SlideData,
     ChartData, StatItem,
@@ -23,6 +23,90 @@ AVAILABLE_LAYOUTS = [
     "title_slide", "section_header", "content",
     "two_column", "image_right", "chart", "stats", "closing",
 ]
+
+
+def _is_no_access_error(err: Exception) -> bool:
+    s = str(err).lower()
+    return "no_access" in s or "no access to model" in s
+
+
+def _fallback_model_id_for(model_name: str) -> str | None:
+    # GitHub Modelsで gpt-4o 権限がない環境向けに mini へ退避する。
+    if model_name == "openai/gpt-4o":
+        return "gpt-4o-mini"
+    if model_name == "gpt-4o":
+        return "openai-gpt-4o-mini"
+    return None
+
+
+def _build_fallback_model_ids(current_model_id: str | None = None) -> list[str]:
+    available = [m for m in get_available_models() if m.get("available")]
+    ids = [m["id"] for m in available if m.get("id")]
+
+    preferred = [
+        "gpt-4o-mini",
+        "openai-gpt-4o-mini",
+        "openai-gpt-4o",
+        "gpt-4o",
+    ]
+    ollama_ids = [i for i in ids if i.startswith("ollama-")]
+    # Qwen 3.5 を Ollama 内で優先（フォールバック時に最初に試す）
+    preferred_ollama = ["ollama-qwen3.5"]
+    other_ollama = [i for i in ollama_ids if i not in preferred_ollama]
+    ollama_ordered = [i for i in preferred_ollama if i in ids] + other_ollama
+    ordered = [i for i in preferred if i in ids] + ollama_ordered + [
+        i for i in ids if i not in preferred and i not in ollama_ids
+    ]
+    if current_model_id:
+        ordered = [i for i in ordered if i != current_model_id]
+    return ordered
+
+
+def _create_chat_with_fallback(
+    model_id: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+):
+    client, model_name, model_info = get_client(model_id)
+    try:
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            temperature=temperature,
+        )
+        return resp, model_info.get("id", model_name)
+    except Exception as e:
+        if not _is_no_access_error(e):
+            raise
+
+        # まずはモデル名に応じた近い候補へ退避
+        first_fb = _fallback_model_id_for(model_name)
+        candidates: list[str] = []
+        if first_fb:
+            candidates.append(first_fb)
+        candidates.extend(
+            [m for m in _build_fallback_model_ids(model_info.get("id")) if m not in candidates]
+        )
+
+        last_err: Exception = e
+        for fb_model_id in candidates:
+            try:
+                fb_client, fb_model_name, fb_info = get_client(fb_model_id)
+                resp = fb_client.chat.completions.create(
+                    model=fb_model_name,
+                    messages=messages,
+                    temperature=temperature,
+                )
+                return resp, fb_info.get("id", fb_model_name)
+            except Exception as e2:
+                last_err = e2
+                if _is_no_access_error(e2):
+                    continue
+                raise
+
+        raise RuntimeError(
+            f"AI API エラー: 利用可能モデルにアクセスできません。最終エラー: {last_err}"
+        )
 
 
 def _build_source_context(req: GenerateRequest) -> str:
@@ -250,6 +334,40 @@ def _parse_response(text: str) -> PresentationData:
     return PresentationData(title=data["title"], theme=theme, slides=slides)
 
 
+def _extract_first_json_object(text: str) -> str | None:
+    """モデル応答から最初の JSON オブジェクト本文を抽出する。"""
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    depth = 0
+    in_str = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 ANALYZE_SYSTEM_PROMPT = """あなたはデータ分析の専門家です。
 提供されたデータ（CSV/Excel分析結果、PDF文書、メール、画像分析結果など）を読み解き、
 ビジネスパーソンが理解しやすい日本語で、要点・洞察・提言を含む分析レポートを作成してください。
@@ -309,13 +427,13 @@ def _build_analysis_context(csv_analysis: dict | None, pdf_text: str) -> str:
 async def generate_analysis_text(csv_analysis: dict | None = None,
                                   pdf_text: str = "",
                                   topic: str = "",
-                                  model_id: str = "auto") -> str:
+                                  model_id: str = "auto") -> tuple[str, str]:
     context = _build_analysis_context(csv_analysis, pdf_text)
     has_context = bool(context.strip())
     has_topic = bool(topic.strip())
 
     if not has_context and not has_topic:
-        return "分析対象のデータがありません。"
+        return "分析対象のデータがありません。", ""
 
     if has_context and has_topic:
         prompt = f"""以下のデータについて、ユーザーの指示に従って回答してください。
@@ -344,11 +462,9 @@ async def generate_analysis_text(csv_analysis: dict | None = None,
         prompt = topic
         system_prompt = GENERAL_SYSTEM_PROMPT
 
-    client, model_name, _ = get_client(model_id)
-
     try:
-        response = client.chat.completions.create(
-            model=model_name,
+        response, used_model = _create_chat_with_fallback(
+            model_id=model_id,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -363,19 +479,21 @@ async def generate_analysis_text(csv_analysis: dict | None = None,
 
     content = response.choices[0].message.content
     if not content:
-        raise RuntimeError("AI API から空のレスポンスが返されました。")
+        raise RuntimeError(
+            "AI API から空のレスポンスが返されました。"
+            "Ollama等を使用している場合はモデルの応答が遅い可能性があります。"
+            "しばらく待って再試行してください。"
+        )
 
-    return content
+    return content, used_model
 
 
 async def generate_presentation_content(req: GenerateRequest,
-                                         model_id: str = "auto") -> PresentationData:
+                                         model_id: str = "auto") -> tuple[PresentationData, str]:
     prompt = _build_prompt(req)
-    client, model_name, _ = get_client(model_id)
-
     try:
-        response = client.chat.completions.create(
-            model=model_name,
+        response, used_model = _create_chat_with_fallback(
+            model_id=model_id,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -392,12 +510,24 @@ async def generate_presentation_content(req: GenerateRequest,
 
     content = response.choices[0].message.content
     if not content:
-        raise RuntimeError("AI API から空のレスポンスが返されました。")
+        raise RuntimeError(
+            "AI API から空のレスポンスが返されました。"
+            "Ollama等を使用している場合はモデルの応答が遅い可能性があります。"
+            "スライド枚数を減らすか、しばらく待って再試行してください。"
+        )
 
     try:
-        return _parse_response(content)
-    except (json.JSONDecodeError, KeyError) as e:
-        raise RuntimeError(f"AIの応答をパースできませんでした: {e}")
+        return _parse_response(content), used_model
+    except (json.JSONDecodeError, KeyError):
+        extracted = _extract_first_json_object(content)
+        if extracted:
+            try:
+                return _parse_response(extracted), used_model
+            except (json.JSONDecodeError, KeyError) as e2:
+                raise RuntimeError(f"AIの応答をパースできませんでした: {e2}")
+        raise RuntimeError(
+            "AIの応答をパースできませんでした: JSON形式で返っていない可能性があります。"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -491,16 +621,14 @@ async def generate_excel_content(
     additional_instructions: str = "",
     style: str = "business",
     model_id: str = "auto",
-) -> dict:
+) -> tuple[dict, str]:
     source_context = _build_analysis_context(csv_analysis, pdf_text)
     prompt = _build_excel_prompt(topic, source_context,
                                  style, additional_instructions)
 
-    client, model_name, _ = get_client(model_id)
-
     try:
-        response = client.chat.completions.create(
-            model=model_name,
+        response, used_model = _create_chat_with_fallback(
+            model_id=model_id,
             messages=[
                 {"role": "system", "content": EXCEL_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -517,9 +645,13 @@ async def generate_excel_content(
 
     content = response.choices[0].message.content
     if not content:
-        raise RuntimeError("AI API から空のレスポンスが返されました。")
+        raise RuntimeError(
+            "AI API から空のレスポンスが返されました。"
+            "Ollama等を使用している場合はモデルの応答が遅い可能性があります。"
+            "しばらく待って再試行してください。"
+        )
 
     try:
-        return _parse_excel_response(content)
+        return _parse_excel_response(content), used_model
     except (json.JSONDecodeError, KeyError) as e:
         raise RuntimeError(f"AIの応答をパースできませんでした: {e}")

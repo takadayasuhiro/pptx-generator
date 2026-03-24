@@ -1,10 +1,14 @@
 services:
   pptx-app:
     build: .
-    ports:
-      - "8000:8000"
+    # WSL2 上で Ollama に localhost 経由で確実に接続するため host ネットワークを使用
+    network_mode: host
     volumes:
+      # Remote-SSH で編集した内容を即時反映する（再build不要）
+      - ./app:/app/app
+      - ./static:/app/static
       - ./output:/app/output
+      - ./pptx-template:/app/pptx-template
     env_file:
       - .env
     environment:

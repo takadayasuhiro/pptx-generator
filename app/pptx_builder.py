@@ -10,7 +10,7 @@ from pptx.oxml.ns import qn
 from lxml import etree
 from app.models import PresentationData, SlideData, ChartData
 from app.image_service import fetch_image
-from app.config import OUTPUT_DIR
+from app.config import OUTPUT_DIR, PPTX_TEMPLATE_DIR
 
 SLIDE_WIDTH = Inches(13.333)
 SLIDE_HEIGHT = Inches(7.5)
@@ -370,9 +370,9 @@ def _style_chart(chart, t, xl_type, theme_name):
 # Layout builders
 # ---------------------------------------------------------------------------
 
-def _build_title_slide(prs, sd, theme):
+def _build_title_slide(prs, sd, theme, layout):
     t = _t(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_dark"])
 
     img_path = fetch_image(sd.image_keyword) if sd.image_keyword else None
@@ -397,9 +397,9 @@ def _build_title_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_closing_slide(prs, sd, theme):
+def _build_closing_slide(prs, sd, theme, layout):
     t = _t(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_dark"])
 
     _rect(slide, Inches(0), Inches(0), Inches(0.12), SLIDE_HEIGHT, t["accent"])
@@ -417,9 +417,9 @@ def _build_closing_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_section_slide(prs, sd, theme):
+def _build_section_slide(prs, sd, theme, layout):
     t = _t(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["accent2"])
 
     _rect(slide, Inches(0), Inches(0), Inches(0.15), SLIDE_HEIGHT, t["text_light"])
@@ -437,10 +437,10 @@ def _build_section_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_content_slide(prs, sd, theme):
+def _build_content_slide(prs, sd, theme, layout):
     t = _t(theme)
     dark = _is_dark(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_light"])
 
     _rect(slide, Inches(0), Inches(0), SLIDE_WIDTH, Inches(0.06), t["accent"])
@@ -474,10 +474,10 @@ def _build_content_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_two_column_slide(prs, sd, theme):
+def _build_two_column_slide(prs, sd, theme, layout):
     t = _t(theme)
     dark = _is_dark(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_light"])
 
     _rect(slide, Inches(0), Inches(0), SLIDE_WIDTH, Inches(0.06), t["accent"])
@@ -513,10 +513,10 @@ def _build_two_column_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_image_right_slide(prs, sd, theme):
+def _build_image_right_slide(prs, sd, theme, layout):
     t = _t(theme)
     dark = _is_dark(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_light"])
 
     _rect(slide, Inches(0), Inches(0), SLIDE_WIDTH, Inches(0.06), t["accent"])
@@ -570,10 +570,10 @@ def _build_image_right_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_chart_slide(prs, sd, theme):
+def _build_chart_slide(prs, sd, theme, layout):
     t = _t(theme)
     dark = _is_dark(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_light"])
 
     _rect(slide, Inches(0), Inches(0), SLIDE_WIDTH, Inches(0.06), t["accent"])
@@ -615,10 +615,10 @@ def _build_chart_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_stats_slide(prs, sd, theme):
+def _build_stats_slide(prs, sd, theme, layout):
     t = _t(theme)
     dark = _is_dark(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_light"])
 
     _rect(slide, Inches(0), Inches(0), SLIDE_WIDTH, Inches(0.06), t["accent"])
@@ -690,11 +690,11 @@ def _build_stats_slide(prs, sd, theme):
     _add_notes(slide, sd.speaker_notes)
 
 
-def _build_summary_slide(prs, summary_data: dict, theme: str):
+def _build_summary_slide(prs, summary_data: dict, theme: str, layout):
     """Build a data analysis summary page from CSV/PDF analysis results."""
     t = _t(theme)
     dark = _is_dark(theme)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(layout)
     _bg(slide, t["bg_light"])
 
     _rect(slide, Inches(0), Inches(0), SLIDE_WIDTH, Inches(1.3), t["bg_dark"])
@@ -850,6 +850,43 @@ def build_summary_data(csv_analysis: dict | None = None,
 
 
 # ---------------------------------------------------------------------------
+# Template support
+# ---------------------------------------------------------------------------
+
+def get_available_pptx_templates() -> list[dict]:
+    """pptx-template 内の .pptx ファイルを一覧返す"""
+    if not os.path.isdir(PPTX_TEMPLATE_DIR):
+        return []
+    result = []
+    for name in sorted(os.listdir(PPTX_TEMPLATE_DIR)):
+        if name.lower().endswith(".pptx") and not name.startswith("~"):
+            base = os.path.splitext(name)[0]
+            label = base.replace("_", " ").replace("-", " ")
+            result.append({"id": name, "label": label})
+    return result
+
+
+def _get_blank_layout(prs) -> object:
+    """プレースホルダが最小のレイアウトを返す（既存スライド追加用）"""
+    best_idx, best_count = 0, 999
+    for i, layout in enumerate(prs.slide_layouts):
+        n = len(layout.placeholders)
+        if n < best_count:
+            best_count = n
+            best_idx = i
+    return prs.slide_layouts[best_idx]
+
+
+def _clear_template_slides(prs) -> None:
+    """テンプレートの既存スライドを削除"""
+    sld_id_list = prs.slides._sldIdLst
+    for i in range(len(sld_id_list) - 1, -1, -1):
+        r_id = sld_id_list[i].rId
+        prs.part.drop_rel(r_id)
+        del sld_id_list[i]
+
+
+# ---------------------------------------------------------------------------
 # Main builder
 # ---------------------------------------------------------------------------
 
@@ -866,19 +903,39 @@ LAYOUT_BUILDERS = {
 
 
 def build_pptx(data: PresentationData, filename: str,
-               summary_data: dict | None = None) -> str:
-    prs = Presentation()
-    prs.slide_width = SLIDE_WIDTH
-    prs.slide_height = SLIDE_HEIGHT
+               summary_data: dict | None = None,
+               template_id: str | None = None) -> str:
+    if template_id:
+        template_path = os.path.join(PPTX_TEMPLATE_DIR, template_id)
+        if not os.path.isfile(template_path):
+            template_id = None  # フォールバック
+    else:
+        template_path = None
+
+    if template_path and os.path.isfile(template_path):
+        try:
+            prs = Presentation(template_path)
+            _clear_template_slides(prs)
+            layout = _get_blank_layout(prs)
+        except Exception:
+            prs = Presentation()
+            prs.slide_width = SLIDE_WIDTH
+            prs.slide_height = SLIDE_HEIGHT
+            layout = _get_blank_layout(prs)
+    else:
+        prs = Presentation()
+        prs.slide_width = SLIDE_WIDTH
+        prs.slide_height = SLIDE_HEIGHT
+        layout = _get_blank_layout(prs)
 
     theme = data.theme if data.theme in THEMES else "ocean_blue"
 
     for i, sd in enumerate(data.slides):
         builder = LAYOUT_BUILDERS.get(sd.layout, _build_content_slide)
-        builder(prs, sd, theme)
+        builder(prs, sd, theme, layout)
 
         if i == 0 and summary_data:
-            _build_summary_slide(prs, summary_data, theme)
+            _build_summary_slide(prs, summary_data, theme, layout)
 
     safe = "".join(
         c for c in filename

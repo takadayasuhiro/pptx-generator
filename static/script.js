@@ -19,6 +19,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const attachBtn = document.getElementById("attachBtn");
     const modelSelect = document.getElementById("modelSelect");
     const modelRefresh = document.getElementById("modelRefresh");
+    const progressLog = document.getElementById("progressLog");
+    const progressLogContent = document.getElementById("progressLogContent");
+    const stopBtn = document.getElementById("stopBtn");
+    let activeAbortController = null;
+    let currentRequestStartMs = 0;
 
     // ===== ヘルプモーダル =====
     const helpBtn = document.getElementById("helpBtn");
@@ -64,6 +69,41 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     loadModels(false);
+
+    // ===== PPTXテンプレート読み込み =====
+    async function loadPptxTemplates() {
+        const templateSelect = document.getElementById("templateSelect");
+        if (!templateSelect) return;
+        try {
+            const resp = await fetch("/pptx-templates");
+            if (!resp.ok) return;
+            const data = await resp.json();
+            while (templateSelect.options.length > 0) {
+                templateSelect.remove(0);
+            }
+            const templates = data.templates || [];
+            if (templates.length === 0) {
+                const opt = document.createElement("option");
+                opt.value = "";
+                opt.textContent = "テンプレートが見つかりません";
+                templateSelect.appendChild(opt);
+                templateSelect.disabled = true;
+                return;
+            }
+            for (const t of templates) {
+                const opt = document.createElement("option");
+                opt.value = t.id;
+                opt.textContent = t.label || t.id;
+                templateSelect.appendChild(opt);
+            }
+            templateSelect.disabled = false;
+            templateSelect.selectedIndex = 0;
+        } catch (e) {
+            console.error("PPTXテンプレート一覧の取得に失敗:", e);
+        }
+    }
+
+    loadPptxTemplates();
 
     modelRefresh.addEventListener("click", async () => {
         modelRefresh.classList.add("spinning");
@@ -148,6 +188,13 @@ document.addEventListener("DOMContentLoaded", () => {
     function updateSummaryVisibility() {
         summaryToggle.style.display =
             (currentMode === "pptx" && hasFiles()) ? "block" : "none";
+    }
+
+    function setRunningState(isRunning) {
+        btnText.style.display = isRunning ? "none" : "inline";
+        btnLoading.style.display = isRunning ? "flex" : "none";
+        submitBtn.disabled = isRunning;
+        if (stopBtn) stopBtn.style.display = isRunning ? "inline-block" : "none";
     }
 
     function getExt(filename) {
@@ -299,24 +346,34 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        btnText.style.display = "none";
-        btnLoading.style.display = "flex";
-        submitBtn.disabled = true;
+        setRunningState(true);
         statusMessage.style.display = "none";
         analysisResult.style.display = "none";
 
-        if (currentMode === "pptx") {
-            await handlePptxGeneration();
-        } else if (currentMode === "excel") {
-            await handleExcelGeneration();
-        } else {
-            await handleAnalysis();
+        try {
+            if (currentMode === "pptx") {
+                await handlePptxGeneration();
+            } else if (currentMode === "excel") {
+                await handleExcelGeneration();
+            } else {
+                await handleAnalysis();
+            }
+        } finally {
+            setRunningState(false);
         }
-
-        btnText.style.display = "inline";
-        btnLoading.style.display = "none";
-        submitBtn.disabled = false;
     });
+
+    if (stopBtn) {
+        stopBtn.addEventListener("click", () => {
+            if (activeAbortController) {
+                activeAbortController.abort();
+                const elapsed = currentRequestStartMs
+                    ? Math.floor((Date.now() - currentRequestStartMs) / 1000)
+                    : 0;
+                appendProgressLog("処理停止を要求しました。", elapsed);
+            }
+        });
+    }
 
     function hasImageFiles() {
         const imgExts = [".jpg",".jpeg",".png",".bmp",".tiff",".tif",".webp",".gif",".ico",".heic",".heif",".svg"];
@@ -324,11 +381,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function handlePptxGeneration() {
-        const selectedTheme = document.querySelector('input[name="theme"]:checked')?.value || "auto";
-        let instructions = document.getElementById("additionalInstructions").value.trim();
-        if (selectedTheme !== "auto") {
-            instructions += `\n\nカラーテーマは必ず「${selectedTheme}」を使用してください。`;
+        const templateSelect = document.getElementById("templateSelect");
+        if (!templateSelect || !templateSelect.value) {
+            showStatus("PPTXテンプレートを選択してください。", "error");
+            return;
         }
+        const instructions = document.getElementById("additionalInstructions").value.trim();
 
         const formData = new FormData();
         formData.append("topic", topicInput.value.trim());
@@ -337,6 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
         formData.append("language", document.getElementById("language").value);
         formData.append("additional_instructions", instructions);
         formData.append("model", modelSelect.value);
+        formData.append("template", templateSelect.value);
 
         for (const file of selectedFiles) {
             formData.append("files", file);
@@ -346,21 +405,33 @@ document.addEventListener("DOMContentLoaded", () => {
             formData.append("include_summary", "true");
         }
 
-        try {
-            showStatus(
-                hasFiles()
-                    ? hasImageFiles()
-                        ? "ファイル解析中... 画像をAIで分析しています（時間がかかる場合があります）"
-                        : "ファイルを解析中... → AI でスライド構成を生成中..."
-                    : "AI でコンテンツ生成中... チャート・画像も準備します",
-                "info"
-            );
+        const phaseMessages = hasFiles()
+            ? hasImageFiles()
+                ? ["リクエスト送信中...", "ファイル解析中...", "画像をAIで分析中...", "AIでスライド構成を生成中...", "PPTX生成中..."]
+                : ["リクエスト送信中...", "ファイル解析中...", "AIでスライド構成を生成中...", "PPTX生成中..."]
+            : ["リクエスト送信中...", "AIでコンテンツ生成中...", "チャート・画像を準備中...", "PPTX生成中..."];
 
-            const response = await fetch("/generate", { method: "POST", body: formData });
+        try {
+            clearProgressLog();
+            appendProgressLog(phaseMessages[0], 0);
+
+            const response = await runWithProgressLog(
+                phaseMessages,
+                async (signal) => fetch("/generate", { method: "POST", body: formData, signal }),
+                { timeoutMs: 180000, intervalMs: 3000 }
+            );
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || `HTTP ${response.status}`);
+                let errMsg = `HTTP ${response.status}`;
+                try {
+                    const err = await response.json();
+                    if (err.detail) errMsg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+                } catch (_) {
+                    const text = await response.text();
+                    if (text) errMsg = text.slice(0, 200);
+                }
+                throw new Error(errMsg);
             }
+            appendUsedModelLog(response);
 
             const warnings = response.headers.get("X-Processing-Warnings");
 
@@ -387,7 +458,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 showStatus("生成が完了しました！ ダウンロードが開始されます。", "success");
             }
         } catch (err) {
-            showStatus(`エラーが発生しました: ${err.message}`, "error");
+            const msg = err.name === "AbortError"
+                ? "処理がタイムアウトしました（3分）。AIの応答が遅い場合があります。スライド枚数を減らすか、しばらく待って再試行してください。"
+                : `エラーが発生しました: ${err.message}`;
+            showStatus(msg, "error");
         }
     }
 
@@ -404,20 +478,32 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
-            showStatus(
-                hasFiles()
-                    ? hasImageFiles()
-                        ? "ファイル解析中... 画像をAIで分析しています"
-                        : "ファイルを解析中... → AI でレポート構成を生成中..."
-                    : "AI でレポート構成を生成中...",
-                "info"
-            );
+            const phaseMessages = hasFiles()
+                ? hasImageFiles()
+                    ? ["リクエスト送信中...", "ファイル解析中...", "画像をAIで分析中...", "Excelレポートを生成中..."]
+                    : ["リクエスト送信中...", "ファイル解析中...", "Excelレポートを生成中..."]
+                : ["リクエスト送信中...", "AIでレポート構成を生成中...", "Excelファイルを生成中..."];
 
-            const response = await fetch("/generate-excel", { method: "POST", body: formData });
+            clearProgressLog();
+            appendProgressLog(phaseMessages[0], 0);
+
+            const response = await runWithProgressLog(
+                phaseMessages,
+                async (signal) => fetch("/generate-excel", { method: "POST", body: formData, signal }),
+                { timeoutMs: 180000, intervalMs: 3000 }
+            );
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || `HTTP ${response.status}`);
+                let errMsg = `HTTP ${response.status}`;
+                try {
+                    const err = await response.json();
+                    if (err.detail) errMsg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+                } catch (_) {
+                    const text = await response.text();
+                    if (text) errMsg = text.slice(0, 200);
+                }
+                throw new Error(errMsg);
             }
+            appendUsedModelLog(response);
 
             const warnings = response.headers.get("X-Processing-Warnings");
 
@@ -444,7 +530,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 showStatus("Excel の生成が完了しました！ ダウンロードが開始されます。", "success");
             }
         } catch (err) {
-            showStatus(`エラーが発生しました: ${err.message}`, "error");
+            const msg = err.name === "AbortError"
+                ? "処理を停止しました。"
+                : `エラーが発生しました: ${err.message}`;
+            showStatus(msg, "error");
         }
     }
 
@@ -458,20 +547,32 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
-            showStatus(
-                hasFiles()
-                    ? hasImageFiles()
-                        ? "画像をAI で分析中... → 分析・要約しています..."
-                        : "ファイルを読み込み中... → AI が分析・要約しています..."
-                    : "AI が回答を生成しています...",
-                "info"
-            );
+            const phaseMessages = hasFiles()
+                ? hasImageFiles()
+                    ? ["リクエスト送信中...", "ファイル解析中...", "画像をAIで分析中...", "分析レポートを生成中..."]
+                    : ["リクエスト送信中...", "ファイルを読み込み中...", "分析レポートを生成中..."]
+                : ["リクエスト送信中...", "AIが回答を生成中..."];
 
-            const response = await fetch("/analyze", { method: "POST", body: formData });
+            clearProgressLog();
+            appendProgressLog(phaseMessages[0], 0);
+
+            const response = await runWithProgressLog(
+                phaseMessages,
+                async (signal) => fetch("/analyze", { method: "POST", body: formData, signal }),
+                { timeoutMs: 180000, intervalMs: 3000 }
+            );
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || `HTTP ${response.status}`);
+                let errMsg = `HTTP ${response.status}`;
+                try {
+                    const err = await response.json();
+                    if (err.detail) errMsg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+                } catch (_) {
+                    const text = await response.text();
+                    if (text) errMsg = text.slice(0, 200);
+                }
+                throw new Error(errMsg);
             }
+            appendUsedModelLog(response);
 
             const data = await response.json();
             analysisText.textContent = data.analysis;
@@ -485,13 +586,78 @@ document.addEventListener("DOMContentLoaded", () => {
 
             analysisResult.scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (err) {
-            showStatus(`エラーが発生しました: ${err.message}`, "error");
+            const msg = err.name === "AbortError"
+                ? "処理を停止しました。"
+                : `エラーが発生しました: ${err.message}`;
+            showStatus(msg, "error");
         }
     }
 
     function showStatus(message, type) {
+        if (progressLogContent.children.length === 0) {
+            progressLog.style.display = "none";
+        } else {
+            progressLog.style.display = "block";
+        }
         statusMessage.textContent = message;
         statusMessage.className = `status-message ${type}`;
         statusMessage.style.display = "block";
+    }
+
+    function clearProgressLog() {
+        progressLogContent.innerHTML = "";
+        progressLog.style.display = "none";
+        statusMessage.style.display = "none";
+    }
+
+    function appendProgressLog(message, elapsedSec) {
+        progressLog.style.display = "block";
+        statusMessage.style.display = "none";
+        const line = document.createElement("div");
+        line.className = "progress-log-line";
+        const timeStr = elapsedSec >= 60
+            ? `${Math.floor(elapsedSec / 60)}分${elapsedSec % 60}秒`
+            : `${elapsedSec}秒`;
+        line.innerHTML = `<span class="progress-log-time">[${timeStr}]</span><span>${message}</span>`;
+        progressLogContent.appendChild(line);
+        progressLogContent.scrollTop = progressLogContent.scrollHeight;
+    }
+
+    function appendUsedModelLog(response, elapsedSec = null) {
+        const usedModel = response?.headers?.get("X-AI-Model-Used");
+        if (!usedModel) return;
+        const sec = elapsedSec ?? (currentRequestStartMs
+            ? Math.floor((Date.now() - currentRequestStartMs) / 1000)
+            : 0);
+        appendProgressLog(`使用モデル: ${usedModel}`, sec);
+    }
+
+    function runWithProgressLog(phaseMessages, fetchFn, options = {}) {
+        const timeoutMs = options.timeoutMs || 120000;
+        const intervalMs = options.intervalMs || 3000;
+        const startTime = Date.now();
+        currentRequestStartMs = startTime;
+        let phaseIdx = 1; // 0番は呼び出し元で既に表示済み
+
+        const timer = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            if (phaseIdx < phaseMessages.length) {
+                appendProgressLog(phaseMessages[phaseIdx], elapsed);
+                phaseIdx++;
+            } else {
+                appendProgressLog(`${phaseMessages[phaseMessages.length - 1]} (${elapsed}秒経過)`, elapsed);
+            }
+        }, intervalMs);
+
+        activeAbortController = new AbortController();
+        const timeoutId = setTimeout(() => activeAbortController.abort(), timeoutMs);
+
+        return fetchFn(activeAbortController.signal)
+            .finally(() => {
+                clearInterval(timer);
+                clearTimeout(timeoutId);
+                activeAbortController = null;
+                currentRequestStartMs = 0;
+            });
     }
 });
