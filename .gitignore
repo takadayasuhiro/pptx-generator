@@ -10,3 +10,5 @@ assets/cache/
 dist/
 build/
 test_data.csv
+# 社内 CA（ローカル配置。SSL_CA_BUNDLE でパス指定も可）
+SecurityAppliance_SSL_CA.pem

@@ -1,16 +1,28 @@
+import asyncio
 import os
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.concurrency import iterate_in_threadpool
+from starlette.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from app.models import GenerateRequest
 from app.ai_client import (
-    generate_presentation_content, generate_analysis_text,
+    generate_presentation_content,
+    generate_analysis_text,
     generate_excel_content,
+    iter_analyze_sse,
 )
 from app.pptx_builder import build_pptx, build_summary_data, get_available_pptx_templates
 from app.excel_builder import build_excel
 from app.file_processor import process_files
-from app.model_registry import get_available_models, clear_ollama_cache
+from app.model_diagnostics import build_snapshot as build_model_diagnostics_snapshot
+from app.model_registry import (
+    get_available_models,
+    clear_ollama_cache,
+    ping_model_minimal,
+)
 
 app = FastAPI(title="PPTX Auto Generator", version="4.0.0")
 
@@ -23,6 +35,37 @@ async def index():
     index_path = os.path.join(STATIC_DIR, "index.html")
     with open(index_path, "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
+
+
+@app.get("/model-diagnostics", response_class=HTMLResponse)
+async def model_diagnostics_page():
+    path = os.path.join(STATIC_DIR, "model-diagnostics.html")
+    with open(path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.get("/api/model-diagnostics")
+async def api_model_diagnostics(refresh_ollama: bool = False):
+    return build_model_diagnostics_snapshot(refresh_ollama=refresh_ollama)
+
+
+class ModelDiagnosticsPingBody(BaseModel):
+    model_ids: list[str] | None = Field(
+        default=None,
+        description="省略時は選択可能な全モデルを順にテスト",
+    )
+
+
+@app.post("/api/model-diagnostics/ping")
+async def api_model_diagnostics_ping(body: ModelDiagnosticsPingBody):
+    snap = build_model_diagnostics_snapshot(refresh_ollama=False)
+    ids = body.model_ids
+    if not ids:
+        ids = [m["id"] for m in snap["models"] if m["selectable_available"]]
+    results: dict = {}
+    for mid in ids:
+        results[mid] = await asyncio.to_thread(ping_model_minimal, mid)
+    return {"results": results, "tested_ids": ids}
 
 
 @app.get("/models")
@@ -226,3 +269,52 @@ async def analyze_file(
     if used_model:
         response.headers["X-AI-Model-Used"] = used_model
     return response
+
+
+@app.post("/analyze/stream")
+async def analyze_file_stream(
+    topic: str = Form(""),
+    model: str = Form("auto"),
+    files: list[UploadFile] = File(default=[]),
+):
+    processed = await process_files(files, model_id=model)
+
+    all_text_parts = list(processed["texts"])
+    if processed["image_descriptions"]:
+        all_text_parts.append(
+            "■ 画像分析結果:\n" + "\n\n".join(processed["image_descriptions"])
+        )
+    combined_text = "\n\n".join(all_text_parts)
+
+    csv_analysis = None
+    if processed["csv_analyses"]:
+        csv_analysis = processed["csv_analyses"][0]["analysis"]
+
+    has_file_data = bool(combined_text) or bool(csv_analysis)
+    has_topic = bool(topic.strip())
+
+    if not has_file_data and not has_topic:
+        raise HTTPException(
+            status_code=400,
+            detail="テキストを入力するか、ファイルを添付してください。",
+        )
+
+    warnings = processed.get("warnings") or []
+
+    return StreamingResponse(
+        iterate_in_threadpool(
+            iter_analyze_sse(
+                csv_analysis=csv_analysis,
+                pdf_text=combined_text,
+                topic=topic,
+                model_id=model,
+                warnings=warnings,
+            )
+        ),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

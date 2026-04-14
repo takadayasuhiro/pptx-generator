@@ -28,9 +28,10 @@
 
 | モデル | 提供元 | API キー | 特徴 |
 |---|---|---|---|
-| GPT-4o | GitHub Models | `GITHUB_TOKEN` | 高精度・JSON安定・Vision対応 |
-| GPT-4o mini | GitHub Models | `GITHUB_TOKEN` | 高速・低コスト |
-| GPT-4o | OpenAI 直接 | `OPENAI_API_KEY` | レート制限緩和（有料） |
+| gemini-2.5-flash | Google AI（Gemini） | `GOOGLE_API_KEY` | 高速・Vision 対応（推奨） |
+| gemini-2.5-flash-lite | Google AI（Gemini） | `GOOGLE_API_KEY` | 低コスト・低遅延 |
+
+アプリは **OpenAI 互換 SDK** で Gemini のエンドポイントに接続します（実体は Google AI Studio のキー）。
 
 ### ローカル LLM（Ollama 経由・インターネット不要）
 
@@ -47,14 +48,14 @@
 
 ## 3. 利用人数別の運用想定
 
-### GPT-4o（API）メインの場合
+### Gemini（API）メインの場合
 
 | 同時利用者 | サーバー負荷 | 制約 | 対策 |
 |---|---|---|---|
 | 1〜5人 | ほぼゼロ | なし | 現状のまま |
-| 5〜10人 | ほぼゼロ | API レート制限に注意 | ワーカー数増加 |
-| 10〜20人 | 低い | レート制限到達の可能性 | OpenAI有料キー取得 |
-| 20人以上 | 低い | レート制限 | 複数APIキー分散 |
+| 5〜10人 | ほぼゼロ | API レート制限に注意 | ワーカー数増加・`AI_TIMEOUT` 調整 |
+| 10〜20人 | 低い | クォータ到達の可能性 | Google AI の利用枠・複数プロジェクトで分散 |
+| 20人以上 | 低い | クォータ | Ollama 併用・キューイング |
 
 ### Ollama（Qwen3.5 8B）メインの場合
 
@@ -68,9 +69,9 @@
 ### 推奨ハイブリッド運用
 
 ```
-通常業務        → GPT-4o（API） で高品質・並列処理
+通常業務        → Gemini（API）で高品質・並列処理
 機密データ分析  → Qwen3.5 8B（Ollama）でローカル処理
-API 制限到達時  → 自動で Ollama にフォールバック（将来実装可）
+API 制限到達時  → アプリは利用可能モデルへ順次フォールバック（Gemini 間 → Ollama）
 ```
 
 ---
@@ -92,26 +93,22 @@ cp .env.example .env
 docker compose up --build -d
 
 # 4. ブラウザでアクセス
-# http://localhost:8000
+# http://localhost （ポート 80）
 ```
 
 ### 4-2. .env の設定項目
 
 ```env
-# 必須: GitHub Models（GPT-4o）
-GITHUB_TOKEN=github_pat_XXXXXXXXXXXX
+# 必須: Google AI Studio（Gemini）— https://aistudio.google.com/apikey
+GOOGLE_API_KEY=your_key_here
 
 # 必須: 画像検索（PPTX生成用）
 PEXELS_API_KEY=XXXXXXXXXXXX
 
-# 任意: OpenAI 直接利用（レート制限緩和）
-OPENAI_API_KEY=
+# 任意: 既定モデル（例: gemini-2.5-flash、ollama-qwen3.5-8b）
+# AI_MODEL=gemini-2.5-flash
 
-# 任意: 将来拡張用
-ANTHROPIC_API_KEY=
-GOOGLE_API_KEY=
-
-# 任意: ローカル LLM（Ollama）
+# 任意: ローカル LLM（Ollama・OpenAI 互換ベース URL）
 OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
 ```
 
@@ -157,13 +154,13 @@ OLLAMA_NUM_PARALLEL=4 OLLAMA_MAX_LOADED_MODELS=2 ollama serve
 
 | 用途 | 推奨モデル | 理由 |
 |---|---|---|
-| テキスト質問・相談 | GPT-4o / Qwen3.5 8B | どちらでも十分な品質 |
-| CSV/Excel データ分析 | GPT-4o / Qwen3.5 14B | 数値理解力が重要 |
-| PPTX 生成 | GPT-4o | JSON 構造出力の安定性が最重要 |
-| Excel 生成 | GPT-4o / Qwen3.5 8B | JSON 構造出力が必要 |
+| テキスト質問・相談 | Gemini Flash / Qwen3.5 8B | どちらでも十分な品質 |
+| CSV/Excel データ分析 | Gemini Flash / Qwen3.5 14B | 数値理解力が重要 |
+| PPTX 生成 | Gemini Flash | JSON 構造出力の安定性が最重要（不安定時は Ollama 14B） |
+| Excel 生成 | Gemini Flash / Qwen3.5 8B | JSON 構造出力が必要 |
 | 機密データの分析 | Qwen3.5 8B（ローカル） | データが外部に出ない |
-| 短い要約（100文字等） | GPT-4o | 指示遵守能力が最も高い |
-| 大量リクエスト | Qwen3.5 4B（ローカル） | API制限を回避 |
+| 短い要約（100文字等） | Gemini Flash | 指示遵守がしやすい |
+| 大量リクエスト | Qwen3.5 4B（ローカル） | API クォータを節約 |
 
 ---
 
@@ -176,14 +173,14 @@ OLLAMA_NUM_PARALLEL=4 OLLAMA_MAX_LOADED_MODELS=2 ollama serve
 
 ```dockerfile
 # Dockerfile の CMD を変更
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4"]
 ```
 
 **効果**: 同時 4リクエスト並列処理。5〜10人の利用に対応。
 
-### Phase 2: 中規模対策（作業 1〜2日・コスト 月$20程度）
+### Phase 2: 中規模対策（作業 1〜2日・コストは利用量次第）
 
-- [ ] OpenAI 有料 API キー取得（レート制限緩和）
+- [ ] Google AI のクォータ・課金プランの確認（必要なら上限引き上げ）
 - [ ] ジョブキュー方式の導入（進捗バー表示）
 - [ ] 結果キャッシュの実装（同一入力の再利用）
 - [ ] 複数 API キーのラウンドロビン
@@ -204,11 +201,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 
 | キー | 取得先 | 費用 | 用途 |
 |---|---|---|---|
-| `GITHUB_TOKEN` | https://github.com/settings/tokens | 無料 | GPT-4o（GitHub Models経由） |
+| `GOOGLE_API_KEY` | https://aistudio.google.com/apikey | 無料枠あり（従量あり） | Gemini（クラウド推論） |
 | `PEXELS_API_KEY` | https://www.pexels.com/api/ | 無料 | PPTX用画像検索 |
-| `OPENAI_API_KEY` | https://platform.openai.com/api-keys | 従量課金 | GPT-4o（直接利用・レート緩和） |
 
-> `GITHUB_TOKEN` は同じ GitHub アカウントであれば自宅と会社で共用可能。
+> `GOOGLE_API_KEY` は組織のポリシーに応じてプロジェクト単位で管理してください。
 > `PEXELS_API_KEY` は環境ごとに取得推奨。
 
 ---
@@ -217,7 +213,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 
 - `.env` ファイルには API キーが含まれるため、**Git にコミットしない**こと（`.gitignore` で除外済み）
 - Ollama を使用すればデータは**ローカルで完全に処理**され、外部に送信されない
-- GPT-4o（API）使用時はデータが OpenAI / GitHub のサーバーに送信される点を認識すること
+- Gemini（API）使用時はデータが Google のサーバーに送信される点を認識すること
 - 機密性の高いデータの分析には **Ollama（ローカルモデル）の使用を推奨**
 
 ---
@@ -237,7 +233,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
          開発端末                           実行サーバー
 
   社内ユーザー（全員）
-  ブラウザ → http://192.168.1.10:8000 でアクセス
+  ブラウザ → http://192.168.1.10 でアクセス（ポート 80）
 ```
 
 ### 9-2. 開発方式: Remote SSH（推奨）
@@ -249,7 +245,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 | コード編集 | 自席 PC の Cursor（SSH 経由でサーバー上のファイルを編集） |
 | Docker 実行 | AI サーバー |
 | Ollama 実行 | AI サーバー |
-| 動作確認 | 自席 PC のブラウザ → `http://192.168.1.10:8000` |
+| 動作確認 | 自席 PC のブラウザ → `http://192.168.1.10` |
 | Git 操作 | Cursor のターミナル → サーバー上で実行 |
 
 ### 9-3. Remote SSH セットアップ
@@ -309,7 +305,7 @@ Remote SSH で直接編集すると「編集 = 即本番反映」になるため
 #### ディレクトリ構成
 
 ```
-/home/user/pptx/          ← 本番用（main ブランチ固定・ポート 8000）
+/home/user/pptx/          ← 本番用（main ブランチ固定・ポート 80）
 /home/user/pptx-dev/      ← 開発用（feature ブランチ・ポート 8001）
 ```
 
@@ -326,7 +322,7 @@ services:
   app-dev:
     build: .
     ports:
-      - "8001:8000"
+      - "8001:80"
     env_file: .env
     volumes:
       - ./output:/app/output
@@ -337,7 +333,7 @@ services:
 
 ```
 AIサーバー (192.168.1.10)
-├─ [本番] pptx-app   :8000  ← main ブランチ（ユーザーが利用中）
+├─ [本番] pptx-app   :80  ← main ブランチ（ユーザーが利用中）
 └─ [開発] pptx-dev   :8001  ← feature ブランチ（開発者のみテスト）
 ```
 
@@ -360,7 +356,7 @@ AIサーバー (192.168.1.10)
   3. コードを変更
   4. docker compose -f docker-compose.dev.yml up --build -d
   5. ブラウザで http://192.168.1.10:8001 で検証
-     （本番 :8000 はそのまま稼働中）
+     （本番 :80 はそのまま稼働中）
   6. テスト完了 → git push → ~/pptx で git pull → 本番再ビルド
 ```
 
@@ -377,7 +373,7 @@ AIサーバー (192.168.1.10)
 
 | サービス | ポート | 用途 | アクセス元 |
 |---|---|---|---|
-| 本番アプリ | 8000 | ユーザー向け | 社内全員 `http://192.168.1.10:8000` |
+| 本番アプリ | 80 | ユーザー向け | 社内全員 `http://192.168.1.10` |
 | 開発アプリ | 8001 | テスト用 | 開発者のみ `http://192.168.1.10:8001` |
 | Ollama API | 11434 | LLM 推論 | Docker 内部 |
 | SSH | 22 | Remote SSH | 開発者のみ |
@@ -392,8 +388,8 @@ AIサーバー (192.168.1.10)
 |---|---|---|
 | モデルセレクターに Ollama モデルが表示されない | Ollama が起動していない / URL が間違い | `ollama serve` 実行確認、`.env` の `OLLAMA_BASE_URL` 確認 |
 | Docker から Ollama に接続できない | localhost では Docker→ホスト間通信不可 | `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` に変更 |
-| 「APIのレート制限に達しました」 | GitHub Models の無料枠超過 | 時間を置くか、OpenAI 有料キーに切替 |
-| PPTX/Excel 生成で JSON パースエラー | モデルの JSON 出力が不正 | GPT-4o に切替（JSON安定性が最も高い） |
+| 「APIのレート制限に達しました」等 | Gemini のクォータ超過 | 時間を置く・別キー・Ollama に切替 |
+| PPTX/Excel 生成で JSON パースエラー | モデルの JSON 出力が不正 | `gemini-2.5-flash` のまま再試行、または Ollama の大きめモデルに切替 |
 | 画像が PPTX に含まれない | Pexels API キー未設定 / 制限 | `.env` の `PEXELS_API_KEY` を確認 |
 | 応答が非常に遅い | Ollama のモデルコールドスタート | 初回のみ。2回目以降は高速（5分以内の再利用時） |
 | SSH 接続できない | WSL2 の SSH が起動していない / FW未許可 | `sudo service ssh start` 実行、Windows FW でポート 22 許可 |

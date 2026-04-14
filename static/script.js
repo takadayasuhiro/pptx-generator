@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const stopBtn = document.getElementById("stopBtn");
     let activeAbortController = null;
     let currentRequestStartMs = 0;
+    let lastCompletedRequestElapsedSec = 0;
 
     // ===== ヘルプモーダル =====
     const helpBtn = document.getElementById("helpBtn");
@@ -115,13 +116,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectedFiles = [];
 
     const ACCEPTED_EXTENSIONS = new Set([
-        ".pdf", ".csv", ".xlsx", ".xls", ".msg",
+        ".pdf", ".pptx", ".csv", ".xlsx", ".xls", ".msg",
         ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
         ".webp", ".gif", ".ico", ".heic", ".heif", ".svg",
     ]);
 
     const FILE_ICONS = {
-        ".pdf": "📄", ".csv": "📊", ".xlsx": "📗", ".xls": "📗",
+        ".pdf": "📄", ".pptx": "📊", ".csv": "📊", ".xlsx": "📗", ".xls": "📗",
         ".msg": "📧",
         ".jpg": "🖼️", ".jpeg": "🖼️", ".png": "🖼️", ".bmp": "🖼️",
         ".tiff": "🖼️", ".tif": "🖼️", ".webp": "🖼️", ".gif": "🖼️",
@@ -363,6 +364,15 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    function selectedModelTag() {
+        const v = modelSelect && modelSelect.value;
+        return v ? `（モデル: ${v}）` : "";
+    }
+
+    function formatProgressMessage(msg) {
+        return msg + selectedModelTag();
+    }
+
     if (stopBtn) {
         stopBtn.addEventListener("click", () => {
             if (activeAbortController) {
@@ -370,7 +380,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const elapsed = currentRequestStartMs
                     ? Math.floor((Date.now() - currentRequestStartMs) / 1000)
                     : 0;
-                appendProgressLog("処理停止を要求しました。", elapsed);
+                appendProgressLog(formatProgressMessage("処理停止を要求しました。"), elapsed);
             }
         });
     }
@@ -413,7 +423,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         try {
             clearProgressLog();
-            appendProgressLog(phaseMessages[0], 0);
+            appendProgressLog(formatProgressMessage(phaseMessages[0]), 0);
 
             const response = await runWithProgressLog(
                 phaseMessages,
@@ -485,7 +495,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 : ["リクエスト送信中...", "AIでレポート構成を生成中...", "Excelファイルを生成中..."];
 
             clearProgressLog();
-            appendProgressLog(phaseMessages[0], 0);
+            appendProgressLog(formatProgressMessage(phaseMessages[0]), 0);
 
             const response = await runWithProgressLog(
                 phaseMessages,
@@ -546,40 +556,112 @@ document.addEventListener("DOMContentLoaded", () => {
             formData.append("files", file);
         }
 
+        const phaseMessages = hasFiles()
+            ? hasImageFiles()
+                ? ["リクエスト送信中...", "ファイル解析中...", "画像をAIで分析中...", "回答をストリーミング受信中..."]
+                : ["リクエスト送信中...", "ファイルを読み込み中...", "回答をストリーミング受信中..."]
+            : ["リクエスト送信中...", "回答をストリーミング受信中..."];
+
         try {
-            const phaseMessages = hasFiles()
-                ? hasImageFiles()
-                    ? ["リクエスト送信中...", "ファイル解析中...", "画像をAIで分析中...", "分析レポートを生成中..."]
-                    : ["リクエスト送信中...", "ファイルを読み込み中...", "分析レポートを生成中..."]
-                : ["リクエスト送信中...", "AIが回答を生成中..."];
-
             clearProgressLog();
-            appendProgressLog(phaseMessages[0], 0);
+            appendProgressLog(formatProgressMessage(phaseMessages[0]), 0);
 
-            const response = await runWithProgressLog(
-                phaseMessages,
-                async (signal) => fetch("/analyze", { method: "POST", body: formData, signal }),
-                { timeoutMs: 180000, intervalMs: 3000 }
-            );
-            if (!response.ok) {
-                let errMsg = `HTTP ${response.status}`;
-                try {
-                    const err = await response.json();
-                    if (err.detail) errMsg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
-                } catch (_) {
-                    const text = await response.text();
-                    if (text) errMsg = text.slice(0, 200);
+            let phaseIdx = 1;
+            const startMs = Date.now();
+            currentRequestStartMs = startMs;
+
+            const phaseTimer = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - startMs) / 1000);
+                if (phaseIdx < phaseMessages.length) {
+                    appendProgressLog(formatProgressMessage(phaseMessages[phaseIdx]), elapsed);
+                    phaseIdx++;
+                } else {
+                    appendProgressLog(
+                        formatProgressMessage(`${phaseMessages[phaseMessages.length - 1]} (${elapsed}秒経過)`),
+                        elapsed
+                    );
                 }
-                throw new Error(errMsg);
+            }, 3000);
+
+            activeAbortController = new AbortController();
+            const streamTimeoutMs = 180000;
+            const streamTimeoutId = setTimeout(() => {
+                if (activeAbortController) activeAbortController.abort();
+            }, streamTimeoutMs);
+
+            let usedModel = "";
+            let streamWarnings = [];
+
+            try {
+                const response = await fetch("/analyze/stream", {
+                    method: "POST",
+                    body: formData,
+                    signal: activeAbortController.signal,
+                });
+
+                if (!response.ok) {
+                    let errMsg = `HTTP ${response.status}`;
+                    try {
+                        const err = await response.json();
+                        if (err.detail) errMsg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+                    } catch (_) {
+                        const text = await response.text();
+                        if (text) errMsg = text.slice(0, 200);
+                    }
+                    throw new Error(errMsg);
+                }
+
+                analysisText.textContent = "";
+                analysisResult.style.display = "block";
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    for (;;) {
+                        const sep = buf.indexOf("\n\n");
+                        if (sep === -1) break;
+                        const rawBlock = buf.slice(0, sep);
+                        buf = buf.slice(sep + 2);
+                        const lines = rawBlock.split("\n");
+                        for (const line of lines) {
+                            if (!line.startsWith("data: ")) continue;
+                            let payload;
+                            try {
+                                payload = JSON.parse(line.slice(6));
+                            } catch (_) {
+                                continue;
+                            }
+                            if (payload.type === "warnings" && Array.isArray(payload.warnings)) {
+                                streamWarnings = payload.warnings;
+                            } else if (payload.type === "meta") {
+                                usedModel = payload.model || "";
+                            } else if (payload.type === "delta" && payload.text) {
+                                analysisText.textContent += payload.text;
+                            } else if (payload.type === "error") {
+                                throw new Error(payload.message || "ストリーミングエラー");
+                            }
+                        }
+                    }
+                }
+            } finally {
+                clearInterval(phaseTimer);
+                clearTimeout(streamTimeoutId);
+                lastCompletedRequestElapsedSec = Math.floor((Date.now() - startMs) / 1000);
+                currentRequestStartMs = 0;
+                activeAbortController = null;
             }
-            appendUsedModelLog(response);
 
-            const data = await response.json();
-            analysisText.textContent = data.analysis;
-            analysisResult.style.display = "block";
+            if (usedModel) {
+                appendProgressLog(`使用モデル: ${usedModel}`, lastCompletedRequestElapsedSec);
+            }
 
-            if (data.warnings && data.warnings.length > 0) {
-                showStatus(`分析完了（警告: ${data.warnings.join(", ")}）`, "warning");
+            if (streamWarnings.length > 0) {
+                showStatus(`分析完了（警告: ${streamWarnings.join(", ")}）`, "warning");
             } else {
                 showStatus("分析が完了しました！", "success");
             }
@@ -626,9 +708,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function appendUsedModelLog(response, elapsedSec = null) {
         const usedModel = response?.headers?.get("X-AI-Model-Used");
         if (!usedModel) return;
-        const sec = elapsedSec ?? (currentRequestStartMs
-            ? Math.floor((Date.now() - currentRequestStartMs) / 1000)
-            : 0);
+        const sec = elapsedSec != null ? elapsedSec : lastCompletedRequestElapsedSec;
         appendProgressLog(`使用モデル: ${usedModel}`, sec);
     }
 
@@ -642,10 +722,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const timer = setInterval(() => {
             const elapsed = Math.floor((Date.now() - startTime) / 1000);
             if (phaseIdx < phaseMessages.length) {
-                appendProgressLog(phaseMessages[phaseIdx], elapsed);
+                appendProgressLog(formatProgressMessage(phaseMessages[phaseIdx]), elapsed);
                 phaseIdx++;
             } else {
-                appendProgressLog(`${phaseMessages[phaseMessages.length - 1]} (${elapsed}秒経過)`, elapsed);
+                appendProgressLog(
+                    formatProgressMessage(
+                        `${phaseMessages[phaseMessages.length - 1]} (${elapsed}秒経過)`
+                    ),
+                    elapsed
+                );
             }
         }, intervalMs);
 
@@ -657,6 +742,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 clearInterval(timer);
                 clearTimeout(timeoutId);
                 activeAbortController = null;
+                if (currentRequestStartMs) {
+                    lastCompletedRequestElapsedSec = Math.floor(
+                        (Date.now() - currentRequestStartMs) / 1000
+                    );
+                }
                 currentRequestStartMs = 0;
             });
     }

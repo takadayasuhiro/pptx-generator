@@ -7,22 +7,32 @@ from app.pdf_service import extract_text as extract_pdf_text
 from app.csv_service import analyze as analyze_csv
 from app.excel_service import analyze as analyze_excel
 from app.msg_service import extract_content as extract_msg_content
+from app.pptx_input_service import extract_text_from_pptx
 from app.image_analysis import analyze_image, IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
 DOCUMENT_EXT = {".pdf"}
+PRESENTATION_EXT = {".pptx"}
 SPREADSHEET_EXT = {".csv", ".xlsx", ".xls"}
 EMAIL_EXT = {".msg"}
 VECTOR_EXT = {".svg"}
 
-ALL_EXTENSIONS = DOCUMENT_EXT | SPREADSHEET_EXT | EMAIL_EXT | IMAGE_EXTENSIONS | VECTOR_EXT
+ALL_EXTENSIONS = (
+    DOCUMENT_EXT | PRESENTATION_EXT | SPREADSHEET_EXT | EMAIL_EXT
+    | IMAGE_EXTENSIONS | VECTOR_EXT
+)
 
 MAX_SINGLE_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 FILE_TYPE_LABELS = {
-    ".pdf": "PDF", ".csv": "CSV", ".xlsx": "Excel", ".xls": "Excel",
-    ".msg": "メール", ".svg": "SVG",
+    ".pdf": "PDF",
+    ".pptx": "PPTX",
+    ".csv": "CSV",
+    ".xlsx": "Excel",
+    ".xls": "Excel",
+    ".msg": "メール",
+    ".svg": "SVG",
 }
 
 
@@ -67,6 +77,10 @@ async def process_files(files: list[UploadFile],
             if ext in DOCUMENT_EXT:
                 text = extract_pdf_text(content)
                 result["texts"].append(f"【PDF: {file.filename}】\n{text}")
+
+            elif ext in PRESENTATION_EXT:
+                text = extract_text_from_pptx(content)
+                result["texts"].append(f"【PPTX: {file.filename}】\n{text}")
 
             elif ext == ".csv":
                 analysis = analyze_csv(content)

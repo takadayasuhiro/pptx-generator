@@ -18,7 +18,10 @@
                     <p class="subtitle">AI でデータ分析 &amp; プレゼン資料を自動生成</p>
                 </div>
             </div>
-            <button type="button" class="help-btn" id="helpBtn" title="ヘルプ">?</button>
+            <div class="header-trailing">
+                <a href="/model-diagnostics" class="diag-link" title="モデル・APIキー疎通診断">診断</a>
+                <button type="button" class="help-btn" id="helpBtn" title="ヘルプ">?</button>
+            </div>
         </header>
 
         <!-- ヘルプモーダル -->
@@ -31,7 +34,7 @@
                 <div class="help-body">
                     <section class="help-section">
                         <h3>■ アプリ概要</h3>
-                        <p>複数の AI モデル（GPT-4o / Ollama 等）を切り替えて、テキスト質問への回答・ファイル分析・PPTX 自動生成を行うツールです。</p>
+                        <p>複数の AI モデル（Gemini / Ollama 等）を切り替えて、テキスト質問への回答・ファイル分析・PPTX 自動生成を行うツールです。</p>
                     </section>
 
                     <section class="help-section">
@@ -68,6 +71,9 @@
                                 <span>PDF</span><span>.pdf</span><span>最大 10MB</span>
                             </div>
                             <div class="help-row">
+                                <span>PowerPoint</span><span>.pptx</span><span>最大 50MB / テキスト抽出</span>
+                            </div>
+                            <div class="help-row">
                                 <span>CSV</span><span>.csv</span><span>最大 5MB / 1,000行</span>
                             </div>
                             <div class="help-row">
@@ -100,7 +106,7 @@
                         <h3>■ データ分析モードの使い方</h3>
                         <ul class="help-list">
                             <li>テキストだけで AI に質問・相談が可能</li>
-                            <li>ファイルを添付して「要約して」「100文字で」等の指示が可能</li>
+                            <li>ファイルを添付して「要約して」「100文字で」等の指示が可能（.pptx はスライド内テキストを抽出）</li>
                             <li>文字数・形式を指定すればその通りに回答</li>
                             <li>指示なしでファイルのみ添付すると包括的な分析レポートを生成</li>
                         </ul>
@@ -112,7 +118,7 @@
                             <li>トピック（テーマ）の入力が必須</li>
                             <li>AI が複数シート構成のレポートを自動生成</li>
                             <li>KPI、データテーブル、チャート（棒・折れ線・円）を含むレポート</li>
-                            <li>CSV/Excel を添付すると実データに基づいた表・グラフを生成</li>
+                            <li>CSV/Excel を添付すると実データに基づいた表・グラフを生成（.pptx 添付で既存資料の文面も参照可能）</li>
                             <li>5種類のカラーテーマを AI が自動選択</li>
                         </ul>
                     </section>
@@ -124,6 +130,7 @@
                             <li>スライド枚数（5〜20枚）、スタイル、言語を選択</li>
                             <li>PPTXテンプレートを選択して、そのデザインに沿って生成</li>
                             <li>CSV/Excel を添付するとデータに基づいたチャートを自動生成</li>
+                            <li>既存の .pptx を添付するとスライド内テキストを読み取り、内容を踏まえて生成</li>
                             <li>ファイル添付時「分析サマリーページを先頭に追加」オプションあり</li>
                             <li>追加指示で「経営層向け」「グラフ多め」等の細かい調整が可能</li>
                         </ul>
@@ -143,7 +150,7 @@
                     <section class="help-section">
                         <h3>■ AI モデル選択</h3>
                         <ul class="help-list">
-                            <li><strong>自動</strong> — 利用可能な最適モデルを自動選択（既定: GPT-4o）</li>
+                            <li><strong>自動</strong> — 利用可能な最適モデルを自動選択（既定: .env の AI_MODEL、未設定時は Gemini → Ollama 優先）</li>
                             <li>入力エリア下部のセレクターでモデルを切り替え可能</li>
                             <li>API キーが未設定のモデルはグレーアウト表示</li>
                             <li>Ollama がローカルで起動中の場合、インストール済みモデルを自動検出</li>
@@ -179,6 +186,7 @@
                         <p class="uph-sub">ファイルのドラッグ＆ドロップ / Ctrl+V も可能</p>
                         <div class="uph-formats">
                             <span class="fmt-tag fmt-pdf">PDF</span>
+                            <span class="fmt-tag fmt-pptx">PPTX</span>
                             <span class="fmt-tag fmt-csv">CSV</span>
                             <span class="fmt-tag fmt-excel">Excel</span>
                             <span class="fmt-tag fmt-msg">MSG</span>
@@ -187,13 +195,13 @@
                         </div>
                     </div>
                     <input type="file" id="fileInput" multiple
-                        accept=".pdf,.csv,.xlsx,.xls,.msg,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.webp,.gif,.ico,.heic,.heif,.svg"
+                        accept=".pdf,.pptx,.csv,.xlsx,.xls,.msg,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.webp,.gif,.ico,.heic,.heif,.svg"
                         class="file-input-hidden">
                     <div id="fileList" class="file-chips"></div>
                     <div class="input-toolbar">
                         <button type="button" class="attach-btn" id="attachBtn">📎 ファイル添付</button>
                         <div class="toolbar-formats">
-                            <span>PDF</span><span>CSV</span><span>Excel</span><span>MSG</span><span>画像</span>
+                            <span>PDF</span><span>PPTX</span><span>CSV</span><span>Excel</span><span>MSG</span><span>画像</span>
                         </div>
                         <div class="model-selector-wrap">
                             <select id="modelSelect" class="model-select" title="AIモデル選択">
@@ -332,7 +340,7 @@
         </main>
 
         <footer class="footer">
-            <p>Powered by Multi-AI (GPT-4o / Ollama) + python-pptx + Pexels</p>
+            <p>Powered by Gemini + Ollama + python-pptx + Pexels</p>
         </footer>
     </div>
 

@@ -5,6 +5,7 @@ import logging
 
 from PIL import Image
 
+from app.config import AI_MAX_TOKENS
 from app.model_registry import get_vision_client
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ async def analyze_image(content: bytes, filename: str,
                     },
                 ],
             }],
-            max_tokens=2000,
+            max_tokens=AI_MAX_TOKENS,
         )
     except Exception as e:
         raise ValueError(f"画像分析APIエラー: {str(e)}")

@@ -1,5 +1,7 @@
 import json
 import re
+
+from app.config import AI_EXCEL_MAX_TOKENS, AI_MAX_TOKENS
 from app.model_registry import get_client, get_available_models
 from app.models import (
     GenerateRequest, PresentationData, SlideData,
@@ -31,11 +33,9 @@ def _is_no_access_error(err: Exception) -> bool:
 
 
 def _fallback_model_id_for(model_name: str) -> str | None:
-    # GitHub Modelsで gpt-4o 権限がない環境向けに mini へ退避する。
-    if model_name == "openai/gpt-4o":
-        return "gpt-4o-mini"
-    if model_name == "gpt-4o":
-        return "openai-gpt-4o-mini"
+    low = (model_name or "").lower()
+    if "gemini-2.0" in low or "gemini-1.5" in low:
+        return "gemini-2.5-flash"
     return None
 
 
@@ -43,43 +43,80 @@ def _build_fallback_model_ids(current_model_id: str | None = None) -> list[str]:
     available = [m for m in get_available_models() if m.get("available")]
     ids = [m["id"] for m in available if m.get("id")]
 
-    preferred = [
-        "gpt-4o-mini",
-        "openai-gpt-4o-mini",
-        "openai-gpt-4o",
-        "gpt-4o",
-    ]
+    preferred_gemini = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
     ollama_ids = [i for i in ids if i.startswith("ollama-")]
-    # Qwen 3.5 を Ollama 内で優先（フォールバック時に最初に試す）
-    preferred_ollama = ["ollama-qwen3.5"]
-    other_ollama = [i for i in ollama_ids if i not in preferred_ollama]
-    ollama_ordered = [i for i in preferred_ollama if i in ids] + other_ollama
-    ordered = [i for i in preferred if i in ids] + ollama_ordered + [
-        i for i in ids if i not in preferred and i not in ollama_ids
+    qwen_ollama = [i for i in ollama_ids if "qwen" in i.lower()]
+    other_ollama = [i for i in ollama_ids if i not in qwen_ollama]
+    ollama_ordered = qwen_ollama + other_ollama
+
+    ordered = [i for i in preferred_gemini if i in ids] + ollama_ordered + [
+        i for i in ids if i not in preferred_gemini and i not in ollama_ids
     ]
     if current_model_id:
         ordered = [i for i in ordered if i != current_model_id]
     return ordered
 
 
+def _google_json_object_preferred(info: dict) -> bool:
+    return info.get("provider") == "google"
+
+
+def _chat_create(
+    client,
+    model_name: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    cap: int,
+    *,
+    json_object: bool,
+):
+    kw: dict = dict(
+        model=model_name,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=cap,
+    )
+    if json_object:
+        kw["response_format"] = {"type": "json_object"}
+    return client.chat.completions.create(**kw)
+
+
 def _create_chat_with_fallback(
     model_id: str,
     messages: list[dict[str, str]],
     temperature: float,
+    *,
+    max_tokens: int | None = None,
+    use_json_object: bool = False,
 ):
+    cap = AI_MAX_TOKENS if max_tokens is None else max_tokens
     client, model_name, model_info = get_client(model_id)
-    try:
-        resp = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            temperature=temperature,
+
+    def _one(cl, mn, info: dict) -> tuple[object, str]:
+        mid = info.get("id", mn)
+        if use_json_object and _google_json_object_preferred(info):
+            try:
+                r = _chat_create(
+                    cl, mn, messages, temperature, cap, json_object=True,
+                )
+                return r, mid
+            except Exception:
+                r = _chat_create(
+                    cl, mn, messages, temperature, cap, json_object=False,
+                )
+                return r, mid
+        r = _chat_create(
+            cl, mn, messages, temperature, cap, json_object=False,
         )
-        return resp, model_info.get("id", model_name)
+        return r, mid
+
+    try:
+        resp, mid = _one(client, model_name, model_info)
+        return resp, mid
     except Exception as e:
         if not _is_no_access_error(e):
             raise
 
-        # まずはモデル名に応じた近い候補へ退避
         first_fb = _fallback_model_id_for(model_name)
         candidates: list[str] = []
         if first_fb:
@@ -92,12 +129,8 @@ def _create_chat_with_fallback(
         for fb_model_id in candidates:
             try:
                 fb_client, fb_model_name, fb_info = get_client(fb_model_id)
-                resp = fb_client.chat.completions.create(
-                    model=fb_model_name,
-                    messages=messages,
-                    temperature=temperature,
-                )
-                return resp, fb_info.get("id", fb_model_name)
+                resp, mid = _one(fb_client, fb_model_name, fb_info)
+                return resp, mid
             except Exception as e2:
                 last_err = e2
                 if _is_no_access_error(e2):
@@ -107,6 +140,182 @@ def _create_chat_with_fallback(
         raise RuntimeError(
             f"AI API エラー: 利用可能モデルにアクセスできません。最終エラー: {last_err}"
         )
+
+
+def _stream_chat_with_fallback(
+    model_id: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+):
+    """ストリーミング用。戻り値は (stream iterable, 使用したモデルID)。"""
+    client, model_name, model_info = get_client(model_id)
+    try:
+        stream = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=AI_MAX_TOKENS,
+            stream=True,
+        )
+        return stream, model_info.get("id", model_name)
+    except Exception as e:
+        if not _is_no_access_error(e):
+            raise
+
+        first_fb = _fallback_model_id_for(model_name)
+        candidates: list[str] = []
+        if first_fb:
+            candidates.append(first_fb)
+        candidates.extend(
+            [m for m in _build_fallback_model_ids(model_info.get("id")) if m not in candidates]
+        )
+
+        last_err: Exception = e
+        for fb_model_id in candidates:
+            try:
+                fb_client, fb_model_name, fb_info = get_client(fb_model_id)
+                stream = fb_client.chat.completions.create(
+                    model=fb_model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=AI_MAX_TOKENS,
+                    stream=True,
+                )
+                return stream, fb_info.get("id", fb_model_name)
+            except Exception as e2:
+                last_err = e2
+                if _is_no_access_error(e2):
+                    continue
+                raise
+
+        raise RuntimeError(
+            f"AI API エラー: 利用可能モデルにアクセスできません。最終エラー: {last_err}"
+        )
+
+
+def _prepare_analysis_messages(
+    csv_analysis: dict | None,
+    pdf_text: str,
+    topic: str,
+) -> tuple[list[dict[str, str]], float] | str:
+    """分析用メッセージを組み立てる。データなしのときは返答文字列のみを返す。"""
+    context = _build_analysis_context(csv_analysis, pdf_text)
+    has_context = bool(context.strip())
+    has_topic = bool(topic.strip())
+
+    if not has_context and not has_topic:
+        return "分析対象のデータがありません。"
+
+    if has_context and has_topic:
+        prompt = f"""以下のデータについて、ユーザーの指示に従って回答してください。
+
+【ユーザーの指示】
+{topic}
+
+{context}"""
+        system_prompt = ANALYZE_SYSTEM_PROMPT
+    elif has_context:
+        prompt = f"""以下のデータを分析し、包括的なレポートを作成してください。
+
+{context}
+
+以下の構成でレポートを作成してください:
+
+1. データ概要（何のデータか、規模）
+2. 主要な発見事項（3〜5点）
+3. 数値の詳細分析（統計量、相関、トレンド）
+4. カテゴリ別の特徴
+5. 総合評価と提言（ビジネスへの示唆）
+
+プレーンテキストで、読みやすく整形してください。"""
+        system_prompt = ANALYZE_SYSTEM_PROMPT
+    else:
+        prompt = topic
+        system_prompt = GENERAL_SYSTEM_PROMPT
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+    return messages, 0.5
+
+
+def _sse_analyze_event(obj: dict) -> bytes:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+def iter_analyze_sse(
+    csv_analysis: dict | None,
+    pdf_text: str,
+    topic: str,
+    model_id: str,
+    warnings: list | None,
+):
+    """データ分析の SSE イベントをバイト列で同期生成（iterate_in_threadpool 用）。"""
+    warnings = warnings or []
+    prepared = _prepare_analysis_messages(csv_analysis, pdf_text, topic)
+    if isinstance(prepared, str):
+        if warnings:
+            yield _sse_analyze_event({"type": "warnings", "warnings": warnings})
+        yield _sse_analyze_event({"type": "meta", "model": ""})
+        yield _sse_analyze_event({"type": "delta", "text": prepared})
+        yield _sse_analyze_event({"type": "done"})
+        return
+
+    messages, temperature = prepared
+    if warnings:
+        yield _sse_analyze_event({"type": "warnings", "warnings": warnings})
+
+    try:
+        stream, used_model = _stream_chat_with_fallback(
+            model_id=model_id,
+            messages=messages,
+            temperature=temperature,
+        )
+    except RuntimeError as e:
+        yield _sse_analyze_event({"type": "error", "message": str(e)})
+        return
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "rate" in err_str.lower():
+            yield _sse_analyze_event({
+                "type": "error",
+                "message": "APIのレート制限に達しました。しばらく待ってから再度お試しください。",
+            })
+        else:
+            yield _sse_analyze_event({
+                "type": "error",
+                "message": f"AI API エラー: {e}",
+            })
+        return
+
+    yield _sse_analyze_event({"type": "meta", "model": used_model})
+
+    has_content = False
+    try:
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta and delta.content:
+                has_content = True
+                yield _sse_analyze_event({"type": "delta", "text": delta.content})
+    except Exception as e:
+        yield _sse_analyze_event({"type": "error", "message": str(e)})
+        return
+
+    if not has_content:
+        yield _sse_analyze_event({
+            "type": "error",
+            "message": (
+                "AI API から空のレスポンスが返されました。"
+                "Ollama等を使用している場合はモデルの応答が遅い可能性があります。"
+                "しばらく待って再試行してください。"
+            ),
+        })
+        return
+
+    yield _sse_analyze_event({"type": "done"})
 
 
 def _build_source_context(req: GenerateRequest) -> str:
@@ -428,48 +637,16 @@ async def generate_analysis_text(csv_analysis: dict | None = None,
                                   pdf_text: str = "",
                                   topic: str = "",
                                   model_id: str = "auto") -> tuple[str, str]:
-    context = _build_analysis_context(csv_analysis, pdf_text)
-    has_context = bool(context.strip())
-    has_topic = bool(topic.strip())
+    prepared = _prepare_analysis_messages(csv_analysis, pdf_text, topic)
+    if isinstance(prepared, str):
+        return prepared, ""
 
-    if not has_context and not has_topic:
-        return "分析対象のデータがありません。", ""
-
-    if has_context and has_topic:
-        prompt = f"""以下のデータについて、ユーザーの指示に従って回答してください。
-
-【ユーザーの指示】
-{topic}
-
-{context}"""
-        system_prompt = ANALYZE_SYSTEM_PROMPT
-    elif has_context:
-        prompt = f"""以下のデータを分析し、包括的なレポートを作成してください。
-
-{context}
-
-以下の構成でレポートを作成してください:
-
-1. データ概要（何のデータか、規模）
-2. 主要な発見事項（3〜5点）
-3. 数値の詳細分析（統計量、相関、トレンド）
-4. カテゴリ別の特徴
-5. 総合評価と提言（ビジネスへの示唆）
-
-プレーンテキストで、読みやすく整形してください。"""
-        system_prompt = ANALYZE_SYSTEM_PROMPT
-    else:
-        prompt = topic
-        system_prompt = GENERAL_SYSTEM_PROMPT
-
+    messages, temperature = prepared
     try:
         response, used_model = _create_chat_with_fallback(
             model_id=model_id,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.5,
+            messages=messages,
+            temperature=temperature,
         )
     except Exception as e:
         err_str = str(e)
@@ -537,6 +714,12 @@ async def generate_presentation_content(req: GenerateRequest,
 EXCEL_SYSTEM_PROMPT = """あなたはビジネスレポート作成の専門家です。
 指示に従い、Excel形式のレポート構成を純粋なJSON形式のみで出力してください。
 コードブロック記法（```）は絶対に使わないでください。
+JSONの厳守事項:
+- 文字列の中に生の改行を入れない。改行が必要なら \\n のエスケープ1行で書く。
+- 文字列内のダブルクォート " は必ず \\" にエスケープする。
+- 全角カンマで区切らない。区切りは常に半角の , だけ。
+- 末尾のカンマ（trailing comma）を付けない。
+- 応答は先頭の { から対応する } まで完全な1オブジェクトで終える（途中で途切れさせない）。
 CSV/Excelデータの分析結果が提供された場合は、その実データを正確に反映したテーブルやチャートを作成してください。
 chartのseriesのvaluesには、提供された実データの数値をそのまま使ってください。架空の数値は使わないでください。
 tableのrowsの各要素では、数値はJSON数値型（引用符なし）で返してください。"""
@@ -604,14 +787,32 @@ def _build_excel_prompt(topic: str, source_context: str,
 - kpi の items は2〜5個が目安
 - 読みやすく整理された構成にすること
 - 純粋なJSONのみ出力すること
+- セルや本文に含まれる " は \\" にエスケープし、生の改行は使わず \\n のみ
+
+サイズ制約（過長で JSON が壊れるのを防ぐ・必須）:
+- シートは最大2枚
+- 各シートの sections は最大8個まで
+- type "text" の content は1つあたり180文字以内。改行は \\n で最大2個まで
+- type "table" の rows は最大18行、列は実データに合わせつつ12列以内を目安
+- chart の categories と各 series.values は最大14要素まで（カテゴリが多いときは上位を要約）
 """
 
 
 def _parse_excel_response(text: str) -> dict:
     cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    return json.loads(cleaned.strip())
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+    blob = cleaned.strip()
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError:
+        extracted = _extract_first_json_object(blob)
+        if extracted:
+            return json.loads(extracted)
+        raise
+
+
+_MAX_EXCEL_SOURCE_CONTEXT_CHARS = 14000
 
 
 async def generate_excel_content(
@@ -623,6 +824,11 @@ async def generate_excel_content(
     model_id: str = "auto",
 ) -> tuple[dict, str]:
     source_context = _build_analysis_context(csv_analysis, pdf_text)
+    if len(source_context) > _MAX_EXCEL_SOURCE_CONTEXT_CHARS:
+        source_context = (
+            source_context[:_MAX_EXCEL_SOURCE_CONTEXT_CHARS]
+            + "\n\n…（入力が長いため以降を省略。読める範囲だけでレポートを構成してください）"
+        )
     prompt = _build_excel_prompt(topic, source_context,
                                  style, additional_instructions)
 
@@ -633,7 +839,9 @@ async def generate_excel_content(
                 {"role": "system", "content": EXCEL_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.7,
+            temperature=0.25,
+            max_tokens=AI_EXCEL_MAX_TOKENS,
+            use_json_object=True,
         )
     except Exception as e:
         err_str = str(e)
@@ -654,4 +862,12 @@ async def generate_excel_content(
     try:
         return _parse_excel_response(content), used_model
     except (json.JSONDecodeError, KeyError) as e:
-        raise RuntimeError(f"AIの応答をパースできませんでした: {e}")
+        hint = ""
+        el = str(e).lower()
+        if "delimiter" in el or "expecting" in el or "unterminated" in el:
+            hint = (
+                " JSON が壊れているか応答が途中で切れている可能性があります。"
+                "Excel 生成は AI_EXCEL_MAX_TOKENS（未設定時は AI_MAX_TOKENS と 16384 の大きい方）を上限にし、"
+                "Gemini では JSON モードも試します。足りなければ AI_EXCEL_MAX_TOKENS=32768 を検討してください。"
+            )
+        raise RuntimeError(f"AIの応答をパースできませんでした: {e}.{hint}")

@@ -421,6 +421,7 @@ body {
 }
 
 .fmt-pdf { background: #fce4ec; color: #c62828; }
+.fmt-pptx { background: #fff3e0; color: #e65100; }
 .fmt-csv { background: #e8f5e9; color: #2e7d32; }
 .fmt-excel { background: #e8f5e9; color: #1b5e20; }
 .fmt-msg { background: #e3f2fd; color: #1565c0; }
@@ -927,6 +928,214 @@ body {
     text-align: center;
     font-size: 12px;
     color: var(--text-muted);
+}
+
+/* ===== モデル診断ページ ===== */
+.header-trailing {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.diag-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 14px;
+    border-radius: 20px;
+    border: 2px solid var(--border);
+    background: var(--card-bg);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    font-family: inherit;
+    transition: all 0.2s;
+}
+
+.diag-link:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.diagnostics-layout.container {
+    max-width: 1100px;
+}
+
+.diagnostics-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.btn-diag {
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-diag:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.btn-diag.primary {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+
+.btn-diag.primary:hover {
+    filter: brightness(1.08);
+    color: #fff;
+}
+
+.diag-sep {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    margin: 0 4px;
+}
+
+.diag-select {
+    min-width: 220px;
+    max-width: 360px;
+}
+
+.diag-status {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    min-height: 1.4em;
+}
+
+.diag-status.error {
+    color: var(--error);
+}
+
+.diag-section {
+    margin-bottom: 28px;
+}
+
+.diag-section h2 {
+    font-size: 15px;
+    color: var(--primary);
+    margin-bottom: 10px;
+    font-weight: 700;
+}
+
+.diag-json .diag-pre {
+    font-size: 12px;
+    line-height: 1.5;
+    background: #fafbfc;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0;
+}
+
+.diag-notes {
+    padding-left: 1.2em;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.diag-notes li {
+    margin-bottom: 6px;
+}
+
+.diag-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+}
+
+.diag-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.diag-table th,
+.diag-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+.diag-table th {
+    background: #f4f6f9;
+    font-weight: 600;
+    color: var(--primary);
+    white-space: nowrap;
+}
+
+.diag-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.diag-table code {
+    font-size: 11px;
+    background: #f0f2f5;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.diag-ok {
+    color: var(--success);
+    font-weight: 600;
+}
+
+.diag-ng {
+    color: var(--error);
+    font-weight: 600;
+}
+
+.diag-err {
+    color: var(--error);
+    font-size: 11px;
+    word-break: break-word;
+}
+
+.diag-table .detail-cell {
+    max-width: min(560px, 92vw);
+    vertical-align: top;
+}
+
+.diag-ping-details {
+    max-width: 100%;
+}
+
+.diag-ping-details summary.diag-err-summary {
+    cursor: pointer;
+    color: var(--error);
+    font-size: 11px;
+    word-break: break-word;
+    list-style-position: outside;
+}
+
+.diag-err-json {
+    margin-top: 8px;
+    max-height: 360px;
+    overflow: auto;
+    font-size: 11px;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* ===== レスポンシブ ===== */

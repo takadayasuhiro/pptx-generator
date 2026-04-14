@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>モデル診断 — PPTX Auto Generator</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container diagnostics-layout">
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">P</div>
+                <div>
+                    <h1>モデル・API 診断</h1>
+                    <p class="subtitle">.env と選択モデルの整合、各モデルへの疎通を確認</p>
+                </div>
+            </div>
+            <div class="header-trailing">
+                <a href="/" class="diag-link" title="メインに戻る">← メイン</a>
+            </div>
+        </header>
+
+        <div class="diagnostics-toolbar">
+            <button type="button" class="btn-diag primary" id="btnRefresh">スナップショット更新</button>
+            <button type="button" class="btn-diag" id="btnRefreshOllama">Ollama 再検出</button>
+            <button type="button" class="btn-diag primary" id="btnPingAll">利用可能モデル すべて疎通テスト</button>
+            <span class="diag-sep"></span>
+            <select id="pingOneSelect" class="model-select diag-select" title="1件だけテスト"></select>
+            <button type="button" class="btn-diag" id="btnPingOne">選択のみテスト</button>
+        </div>
+        <p id="diagStatus" class="diag-status" aria-live="polite"></p>
+
+        <section class="diag-section">
+            <h2>環境（.env 由来・秘密は出しません）</h2>
+            <div id="envBlock" class="diag-json"></div>
+        </section>
+
+        <section class="diag-section">
+            <h2>「自動」で解決されるモデル</h2>
+            <div id="autoBlock" class="diag-json"></div>
+        </section>
+
+        <section class="diag-section" id="notesSection" style="display:none;">
+            <h2>整合メモ</h2>
+            <ul id="notesList" class="diag-notes"></ul>
+        </section>
+
+        <section class="diag-section">
+            <h2>モデル一覧</h2>
+            <div class="diag-table-wrap">
+                <table class="diag-table" id="modelTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>表示名</th>
+                            <th>プロバイダ</th>
+                            <th>必要な env</th>
+                            <th>キー設定</th>
+                            <th>選択可能</th>
+                            <th>疎通</th>
+                            <th>詳細</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modelTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+(function () {
+    const envBlock = document.getElementById("envBlock");
+    const autoBlock = document.getElementById("autoBlock");
+    const notesSection = document.getElementById("notesSection");
+    const notesList = document.getElementById("notesList");
+    const modelTableBody = document.getElementById("modelTableBody");
+    const diagStatus = document.getElementById("diagStatus");
+    const pingOneSelect = document.getElementById("pingOneSelect");
+    let lastSnapshot = null;
+    const pingResults = {};
+
+    function esc(s) {
+        if (s == null) return "";
+        const d = document.createElement("div");
+        d.textContent = String(s);
+        return d.innerHTML;
+    }
+
+    function setStatus(msg, isError) {
+        diagStatus.textContent = msg || "";
+        diagStatus.className = "diag-status" + (isError ? " error" : "");
+    }
+
+    async function loadSnapshot(refreshOllama) {
+        setStatus("読み込み中...");
+        try {
+            const q = refreshOllama ? "?refresh_ollama=true" : "";
+            const r = await fetch("/api/model-diagnostics" + q);
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            lastSnapshot = await r.json();
+            renderSnapshot(lastSnapshot);
+            setStatus("最終更新: " + new Date().toLocaleString("ja-JP"));
+        } catch (e) {
+            setStatus(String(e.message || e), true);
+        }
+    }
+
+    function renderSnapshot(data) {
+        const env = data.environment || {};
+        const envPretty = {
+            AI_MODEL: env.AI_MODEL,
+            AI_MAX_TOKENS: env.AI_MAX_TOKENS,
+            AI_TIMEOUT: env.AI_TIMEOUT,
+            OLLAMA_BASE_URL: env.OLLAMA_BASE_URL,
+            pexels_configured: env.pexels_configured,
+            api_keys_configured: env.api_keys_configured,
+        };
+        envBlock.innerHTML = "<pre class=\"diag-pre\">" + esc(JSON.stringify(envPretty, null, 2)) + "</pre>";
+
+        const au = data.auto_selection || {};
+        autoBlock.innerHTML = "<pre class=\"diag-pre\">" + esc(JSON.stringify(au, null, 2)) + "</pre>";
+
+        const notes = data.integration_notes || [];
+        if (notes.length) {
+            notesSection.style.display = "block";
+            notesList.innerHTML = notes.map(n => "<li>" + esc(n) + "</li>").join("");
+        } else {
+            notesSection.style.display = "none";
+        }
+
+        const models = data.models || [];
+        pingOneSelect.innerHTML = '<option value="">（モデルを選択）</option>' +
+            models.map(m => {
+                const dis = m.selectable_available ? "" : " (利用不可)";
+                return '<option value="' + esc(m.id) + '">' + esc(m.id + " — " + m.label + dis) + "</option>";
+            }).join("");
+
+        modelTableBody.innerHTML = models.map(m => {
+            const keyOk = m.api_key_env ? (m.env_configured ? "✓" : "✗") : "—";
+            const selOk = m.selectable_available ? "✓" : "✗";
+            const pr = pingResults[m.id];
+            let pingCell = "—";
+            let detailCell = "";
+            if (pr) {
+                if (pr.ok) {
+                    pingCell = '<span class="diag-ok">OK</span> ' + (pr.latency_ms != null ? pr.latency_ms + "ms" : "");
+                    detailCell = esc(pr.response_preview || "");
+                } else {
+                    pingCell = '<span class="diag-ng">NG</span>';
+                    const errMain = esc(pr.error || "");
+                    if (pr.diagnostics) {
+                        detailCell = '<details class="diag-ping-details"><summary class="diag-err-summary">' + errMain + "</summary>" +
+                            '<pre class="diag-pre diag-err-json">' + esc(JSON.stringify(pr.diagnostics, null, 2)) + "</pre></details>";
+                    } else {
+                        detailCell = '<span class="diag-err">' + errMain + "</span>";
+                    }
+                }
+            }
+            return "<tr data-id=\"" + esc(m.id) + "\">" +
+                "<td><code>" + esc(m.id) + "</code></td>" +
+                "<td>" + esc(m.label) + "</td>" +
+                "<td>" + esc(m.provider) + "</td>" +
+                "<td>" + (m.api_key_env ? "<code>" + esc(m.api_key_env) + "</code>" : "—") + "</td>" +
+                "<td>" + keyOk + "</td>" +
+                "<td>" + selOk + "</td>" +
+                "<td class=\"ping-cell\">" + pingCell + "</td>" +
+                "<td class=\"detail-cell\">" + detailCell + "</td>" +
+                "</tr>";
+        }).join("");
+    }
+
+    async function runPing(modelIds) {
+        setStatus("疎通テスト実行中...（モデル数に応じて時間がかかります）");
+        try {
+            const r = await fetch("/api/model-diagnostics/ping", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model_ids: modelIds && modelIds.length ? modelIds : null }),
+            });
+            if (!r.ok) {
+                const t = await r.text();
+                throw new Error("HTTP " + r.status + " " + (t ? t.slice(0, 1200) : ""));
+            }
+            const data = await r.json();
+            const results = data.results || {};
+            if (!modelIds || modelIds.length === 0) {
+                Object.keys(pingResults).forEach((k) => { delete pingResults[k]; });
+            }
+            Object.assign(pingResults, results);
+            if (lastSnapshot) renderSnapshot(lastSnapshot);
+            setStatus("疎通テスト完了（" + (data.tested_ids || []).length + " 件）");
+        } catch (e) {
+            setStatus(String(e.message || e), true);
+        }
+    }
+
+    document.getElementById("btnRefresh").addEventListener("click", () => loadSnapshot(false));
+    document.getElementById("btnRefreshOllama").addEventListener("click", () => loadSnapshot(true));
+    document.getElementById("btnPingAll").addEventListener("click", () => runPing(null));
+    document.getElementById("btnPingOne").addEventListener("click", () => {
+        const v = pingOneSelect.value;
+        if (!v) {
+            setStatus("モデルを選択してください", true);
+            return;
+        }
+        runPing([v]);
+    });
+
+    loadSnapshot(false);
+})();
+    </script>
+</body>
+</html>
